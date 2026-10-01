@@ -2,6 +2,8 @@
 
 **Минималистичная модульная операционная система для ESP32**
 
+Текущая версия: **v0.1.0-alpha**
+
 ## Две версии в репозитории
 
 | Папка / файл              | Для кого                        | Описание |
@@ -24,7 +26,7 @@
 
 ---
 
-## Возможности (Этап 1)
+## Возможности (v0.1.0-alpha)
 
 - Display Manager с несколькими режимами (SHELL / STATUS)
 - Система команд (легко добавлять новые)
@@ -44,27 +46,32 @@ clear
 
 ---
 
-## Структура (модульная версия)
+## Roadmap
+
+Подробный план развития смотри в [ROADMAP.md](ROADMAP.md)
+
+Кратко:
+
+- **Stage 2** — LittleFS + SD Card + Event Bus
+- **Stage 3** — Plugins, кнопки, связь с Arduino
+- **Stage 4** — WiFi tools
+
+---
+
+## Структура
 
 ```
 EspOS/
 ├── ArduinoDroid/
 │   └── EspOS.ino              ← Для ArduinoDroid
 ├── EspOS.ino                  ← Точка входа модульной версии
-├── config/Config.h
+├── config/
 ├── kernel/
 ├── drivers/
 ├── services/
+├── ROADMAP.md
 └── README.md
 ```
-
----
-
-## Планы развития
-
-- Этап 2: LittleFS, события, логирование
-- Этап 3: Плагины, датчики, связь с Arduino
-- Этап 4: WiFi-стек, defensive/offensive инструменты
 
 ---
 
