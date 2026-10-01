@@ -62,11 +62,13 @@
 
 ## Future ideas
 
-- Larger displays (KS0108 etc.)
+- **Поддержка русского языка** (кириллица в Shell + OLED)
+- Larger displays (KS0108 128x64 parallel и др.)
 - RFID (RC522)
-- Simple scripting
-- Power management
-- Mesh experiments
+- Simple scripting language
+- Power management / deep sleep
+- Mesh networking experiments
+- Graphical UI experiments
 
 ---
 

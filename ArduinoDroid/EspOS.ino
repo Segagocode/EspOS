@@ -266,6 +266,7 @@ private:
 // ====================== FILE SYSTEM HELPERS ======================
 
 bool ensureSystemFolders() {
+  // Используем .c_str() для совместимости с разными версиями ядра ESP32
   if (!LittleFS.exists("/system")) {
     LittleFS.mkdir("/system");
   }
@@ -365,7 +366,6 @@ private:
     g_kernel->shell().printResponse("Free heap: " + String(ESP.getFreeHeap()));
     g_kernel->shell().printResponse("CPU: " + String(ESP.getCpuFreqMHz()) + " MHz");
 
-    // FS info
     size_t total = LittleFS.totalBytes();
     size_t used  = LittleFS.usedBytes();
     g_kernel->shell().printResponse("CORE: " + String(used/1024) + "/" + String(total/1024) + " KB");
@@ -401,7 +401,7 @@ private:
     String path = args.length() > 0 ? args : "/";
     if (!path.startsWith("/")) path = "/" + path;
 
-    File root = LittleFS.open(path);
+    File root = LittleFS.open(path.c_str());
     if (!root || !root.isDirectory()) {
       g_kernel->shell().printResponse("Not a directory");
       return;
@@ -415,7 +415,6 @@ private:
 
     while (file) {
       String name = file.name();
-      // LittleFS sometimes returns full path, берём только имя
       int lastSlash = name.lastIndexOf('/');
       if (lastSlash >= 0) name = name.substring(lastSlash + 1);
 
@@ -437,13 +436,12 @@ private:
     String path = args;
     if (!path.startsWith("/")) path = "/" + path;
 
-    File file = LittleFS.open(path, "r");
+    File file = LittleFS.open(path.c_str(), "r");
     if (!file || file.isDirectory()) {
       g_kernel->shell().printResponse("File not found");
       return;
     }
 
-    // Читаем построчно, чтобы не переполнить экран
     while (file.available()) {
       String line = file.readStringUntil('\n');
       line.trim();
@@ -455,7 +453,6 @@ private:
   }
 
   static void cmd_write(const String& args) {
-    // Формат: write <filename> <text>
     int space = args.indexOf(' ');
     if (space <= 0) {
       g_kernel->shell().printResponse("Usage: write <file> <text>");
@@ -467,7 +464,7 @@ private:
 
     if (!filename.startsWith("/")) filename = "/" + filename;
 
-    File file = LittleFS.open(filename, "w");
+    File file = LittleFS.open(filename.c_str(), "w");
     if (!file) {
       g_kernel->shell().printResponse("Cannot write file");
       return;
@@ -487,7 +484,7 @@ private:
     String path = args;
     if (!path.startsWith("/")) path = "/" + path;
 
-    if (LittleFS.remove(path)) {
+    if (LittleFS.remove(path.c_str())) {
       g_kernel->shell().printResponse("Deleted");
     } else {
       g_kernel->shell().printResponse("Failed");
@@ -503,7 +500,7 @@ private:
     String path = args;
     if (!path.startsWith("/")) path = "/" + path;
 
-    if (LittleFS.mkdir(path)) {
+    if (LittleFS.mkdir(path.c_str())) {
       g_kernel->shell().printResponse("Created");
     } else {
       g_kernel->shell().printResponse("Failed");
