@@ -2,93 +2,71 @@
 
 ## Текущая версия
 
-**v0.1.0-alpha** — Stage 1 complete
+**v0.2.0-alpha** — Stage 2 in progress
 
-- Kernel
-- Display Manager (SHELL / STATUS modes)
-- Command system
-- Shell (OLED + Serial as keyboard)
-- Single-file version for ArduinoDroid
+- LittleFS mounted as **CORE:**
+- Basic file commands working
+- System folders auto-created
 
 ---
 
-## Stage 1 — Foundation ✅ (done)
+## Stage 1 — Foundation ✅
 
 - [x] Project structure
-- [x] Display Manager with multiple modes
+- [x] Display Manager (SHELL / STATUS)
 - [x] Command Registry
 - [x] Shell
 - [x] Basic Kernel
 - [x] ArduinoDroid single-file support
 
-**Release:** `v0.1.0-alpha`
+**Released:** `v0.1.0-alpha`
 
 ---
 
-## Stage 2 — Storage & System Core
+## Stage 2 — Storage & System Core  ← сейчас здесь
 
-**Цель:** Появление настоящей файловой системы и внутренней структуры ОС
+- [x] LittleFS as system volume (`CORE:`)
+- [x] Auto-create `/system`, `/config`, `/logs`
+- [x] File commands: `ls`, `cat`, `write`, `rm`, `mkdir`
+- [ ] Better path handling & current directory
+- [ ] Simple config system
+- [ ] SD Card support (`SD:`)
+- [ ] Event Bus
 
-- [ ] LittleFS (internal flash)
-  - `/system/` for configs
-  - Basic file commands: `ls`, `cat`, `rm`, `write`
-- [ ] SD Card support (SPI)
-  - microSD as main large storage (`D:\`)
-  - Mount / unmount commands
-  - File operations on SD
-- [ ] Simple config system (`/system/config.txt`)
-- [ ] Event Bus (modules can talk to each other)
-- [ ] Better logging
-
-**Planned version:** `v0.2.0`
+**Target:** `v0.2.0`
 
 ---
 
 ## Stage 3 — Extensibility
 
 - [ ] Plugin / Module system
-- [ ] Input Manager (buttons support)
-- [ ] Communication with external Arduino (Uno / Nano / Mini) via UART or I2C
-- [ ] Basic sensor drivers from starter kit
-- [ ] Improved multi-mode UI (easy switching between screens)
+- [ ] Buttons support
+- [ ] Communication with Arduino boards
+- [ ] Sensor drivers
+- [ ] Improved multi-screen UI
 
-**Planned version:** `v0.3.0`
+**Target:** `v0.3.0`
 
 ---
 
 ## Stage 4 — Networking & Tools
 
 - [ ] WiFi Manager
-- [ ] Basic network status screen
 - [ ] Packet monitoring foundation
-- [ ] Defensive tools (detect deauth, etc.)
-- [ ] Lab-mode offensive modules (strictly controlled)
+- [ ] Defensive tools
+- [ ] Lab-mode modules
 
-**Planned version:** `v0.4.0`
-
----
-
-## Future ideas (backlog)
-
-- Larger displays support (KS0108 128x64 parallel, etc.)
-- RFID (RC522) integration
-- Simple scripting language
-- Multi-tasking improvements
-- Power management / deep sleep
-- Mesh networking experiments (Meshtastic-inspired)
-- Graphical UI experiments
+**Target:** `v0.4.0`
 
 ---
 
-## Versioning philosophy
+## Future ideas
 
-We use simple semantic-like versions:
-
-- `0.x.y-alpha` — early development
-- Major stage completion → bump minor version (`0.1` → `0.2`)
-- Small improvements and fixes → patch (`0.2.0` → `0.2.1`)
-
-Every meaningful milestone gets a version bump so progress is visible and motivating.
+- Larger displays (KS0108 etc.)
+- RFID (RC522)
+- Simple scripting
+- Power management
+- Mesh experiments
 
 ---
 

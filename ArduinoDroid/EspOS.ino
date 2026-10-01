@@ -1,14 +1,16 @@
 /*
  * EspOS - Single-file version for ArduinoDroid
- * Stage 1: Kernel + Display Manager + Command System + Shell
+ * v0.2.0-alpha
  *
- * Этот файл специально сделан монолитным,
- * чтобы без проблем компилироваться в ArduinoDroid.
+ * Stage 2: LittleFS as system volume (CORE:)
+ * + basic file commands
  */
 
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <FS.h>
+#include <LittleFS.h>
 
 // ====================== CONFIG ======================
 #define SCREEN_WIDTH        128
@@ -22,11 +24,13 @@
 #define SERIAL_BAUD         115200
 
 #define OS_NAME             "EspOS"
-#define OS_VERSION          "0.1.0-alpha"
+#define OS_VERSION          "0.2.0-alpha"
 
-// ====================== FORWARD DECLARATIONS ======================
+#define SYSTEM_PROMPT       "CORE:\\>"
+
+// ====================== FORWARD ======================
 class Kernel;
-Kernel* g_kernel = nullptr;   // Объявляем заранее!
+Kernel* g_kernel = nullptr;
 
 // ====================== DISPLAY ======================
 
@@ -129,7 +133,7 @@ private:
     _display.println("------------");
     _display.println("Mode: STATUS");
     _display.println("Heap: " + String(ESP.getFreeHeap()));
-    _display.println("Chip: ESP32");
+    _display.println("FS: LittleFS");
   }
 };
 
@@ -145,7 +149,7 @@ struct Command {
 
 class CommandRegistry {
 public:
-  static const int MAX_COMMANDS = 16;
+  static const int MAX_COMMANDS = 24;
 
   void registerCommand(const char* name, const char* description, CommandHandler handler) {
     if (_count >= MAX_COMMANDS) return;
@@ -215,7 +219,7 @@ public:
   }
 
   void printPrompt() {
-    _display.printLine("C:\\>");
+    _display.printLine(SYSTEM_PROMPT);
   }
 
   void printResponse(const String& text) {
@@ -230,17 +234,17 @@ public:
 
       if (c == '\n') {
         if (_currentLine.length() > 0) {
-          _display.printLine("C:\\> " + _currentLine);
+          _display.printLine(String(SYSTEM_PROMPT) + " " + _currentLine);
           processLine(_currentLine);
           _currentLine = "";
         }
         printPrompt();
-      } else if (c == 8 || c == 127) { // Backspace
+      } else if (c == 8 || c == 127) {
         if (_currentLine.length() > 0) {
           _currentLine.remove(_currentLine.length() - 1);
         }
       } else {
-        if (_currentLine.length() < MAX_LINE_LENGTH - 4) {
+        if (_currentLine.length() < MAX_LINE_LENGTH - 6) {
           _currentLine += c;
         }
       }
@@ -259,6 +263,21 @@ private:
   }
 };
 
+// ====================== FILE SYSTEM HELPERS ======================
+
+bool ensureSystemFolders() {
+  if (!LittleFS.exists("/system")) {
+    LittleFS.mkdir("/system");
+  }
+  if (!LittleFS.exists("/config")) {
+    LittleFS.mkdir("/config");
+  }
+  if (!LittleFS.exists("/logs")) {
+    LittleFS.mkdir("/logs");
+  }
+  return true;
+}
+
 // ====================== KERNEL ======================
 
 class Kernel {
@@ -271,9 +290,19 @@ public:
     Serial.begin(SERIAL_BAUD);
     delay(100);
 
+    // --- Display ---
     if (!_display.begin()) {
       Serial.println("[Kernel] Display init failed!");
       return false;
+    }
+
+    // --- LittleFS (CORE:) ---
+    if (!LittleFS.begin(true)) {   // true = format if mount fails
+      Serial.println("[Kernel] LittleFS mount failed!");
+      _shell.printResponse("FS mount failed");
+    } else {
+      Serial.println("[Kernel] LittleFS mounted as CORE:");
+      ensureSystemFolders();
     }
 
     registerBuiltinCommands();
@@ -297,15 +326,24 @@ private:
   Shell _shell;
 
   void registerBuiltinCommands() {
-    _commands.registerCommand("help",  "List available commands", cmd_help);
-    _commands.registerCommand("clear", "Clear the screen",        cmd_clear);
-    _commands.registerCommand("dir",   "List directory",          cmd_dir);
-    _commands.registerCommand("info",  "System information",      cmd_info);
-    _commands.registerCommand("echo",  "Print text",              cmd_echo);
-    _commands.registerCommand("mode",  "Switch display mode",     cmd_mode);
+    // System
+    _commands.registerCommand("help",   "List commands",           cmd_help);
+    _commands.registerCommand("clear",  "Clear screen",            cmd_clear);
+    _commands.registerCommand("info",   "System information",      cmd_info);
+    _commands.registerCommand("echo",   "Print text",              cmd_echo);
+    _commands.registerCommand("mode",   "Switch display mode",     cmd_mode);
+
+    // File system (CORE:)
+    _commands.registerCommand("ls",     "List files",              cmd_ls);
+    _commands.registerCommand("dir",    "List files (alias)",      cmd_ls);
+    _commands.registerCommand("cat",    "Show file content",       cmd_cat);
+    _commands.registerCommand("write",  "Write text to file",      cmd_write);
+    _commands.registerCommand("rm",     "Remove file",             cmd_rm);
+    _commands.registerCommand("mkdir",  "Create directory",        cmd_mkdir);
   }
 
-  // ---- Builtin commands ----
+  // -------------------- Commands --------------------
+
   static void cmd_help(const String& args) {
     String list;
     g_kernel->commands().listCommands(list);
@@ -322,14 +360,15 @@ private:
     g_kernel->display().clearLines();
   }
 
-  static void cmd_dir(const String& args) {
-    g_kernel->shell().printResponse("Disk empty");
-  }
-
   static void cmd_info(const String& args) {
     g_kernel->shell().printResponse(String(OS_NAME) + " " + OS_VERSION);
     g_kernel->shell().printResponse("Free heap: " + String(ESP.getFreeHeap()));
     g_kernel->shell().printResponse("CPU: " + String(ESP.getCpuFreqMHz()) + " MHz");
+
+    // FS info
+    size_t total = LittleFS.totalBytes();
+    size_t used  = LittleFS.usedBytes();
+    g_kernel->shell().printResponse("CORE: " + String(used/1024) + "/" + String(total/1024) + " KB");
   }
 
   static void cmd_echo(const String& args) {
@@ -355,9 +394,124 @@ private:
       g_kernel->shell().printResponse("Unknown mode");
     }
   }
+
+  // ---------- File commands ----------
+
+  static void cmd_ls(const String& args) {
+    String path = args.length() > 0 ? args : "/";
+    if (!path.startsWith("/")) path = "/" + path;
+
+    File root = LittleFS.open(path);
+    if (!root || !root.isDirectory()) {
+      g_kernel->shell().printResponse("Not a directory");
+      return;
+    }
+
+    File file = root.openNextFile();
+    if (!file) {
+      g_kernel->shell().printResponse("(empty)");
+      return;
+    }
+
+    while (file) {
+      String name = file.name();
+      // LittleFS sometimes returns full path, берём только имя
+      int lastSlash = name.lastIndexOf('/');
+      if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+
+      if (file.isDirectory()) {
+        g_kernel->shell().printResponse("[DIR] " + name);
+      } else {
+        g_kernel->shell().printResponse(name + " " + String(file.size()) + "b");
+      }
+      file = root.openNextFile();
+    }
+  }
+
+  static void cmd_cat(const String& args) {
+    if (args.length() == 0) {
+      g_kernel->shell().printResponse("Usage: cat <file>");
+      return;
+    }
+
+    String path = args;
+    if (!path.startsWith("/")) path = "/" + path;
+
+    File file = LittleFS.open(path, "r");
+    if (!file || file.isDirectory()) {
+      g_kernel->shell().printResponse("File not found");
+      return;
+    }
+
+    // Читаем построчно, чтобы не переполнить экран
+    while (file.available()) {
+      String line = file.readStringUntil('\n');
+      line.trim();
+      if (line.length() > 0) {
+        g_kernel->shell().printResponse(line);
+      }
+    }
+    file.close();
+  }
+
+  static void cmd_write(const String& args) {
+    // Формат: write <filename> <text>
+    int space = args.indexOf(' ');
+    if (space <= 0) {
+      g_kernel->shell().printResponse("Usage: write <file> <text>");
+      return;
+    }
+
+    String filename = args.substring(0, space);
+    String text = args.substring(space + 1);
+
+    if (!filename.startsWith("/")) filename = "/" + filename;
+
+    File file = LittleFS.open(filename, "w");
+    if (!file) {
+      g_kernel->shell().printResponse("Cannot write file");
+      return;
+    }
+
+    file.println(text);
+    file.close();
+    g_kernel->shell().printResponse("OK");
+  }
+
+  static void cmd_rm(const String& args) {
+    if (args.length() == 0) {
+      g_kernel->shell().printResponse("Usage: rm <file>");
+      return;
+    }
+
+    String path = args;
+    if (!path.startsWith("/")) path = "/" + path;
+
+    if (LittleFS.remove(path)) {
+      g_kernel->shell().printResponse("Deleted");
+    } else {
+      g_kernel->shell().printResponse("Failed");
+    }
+  }
+
+  static void cmd_mkdir(const String& args) {
+    if (args.length() == 0) {
+      g_kernel->shell().printResponse("Usage: mkdir <dir>");
+      return;
+    }
+
+    String path = args;
+    if (!path.startsWith("/")) path = "/" + path;
+
+    if (LittleFS.mkdir(path)) {
+      g_kernel->shell().printResponse("Created");
+    } else {
+      g_kernel->shell().printResponse("Failed");
+    }
+  }
 };
 
-// ====================== ARDUINO ENTRY ======================
+// ====================== ENTRY ======================
 
 Kernel kernel;
 
