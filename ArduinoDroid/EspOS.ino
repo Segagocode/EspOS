@@ -1,9 +1,8 @@
 /*
  * EspOS - Single-file version for ArduinoDroid
- * v0.2.0-alpha
+ * v0.2.1-alpha
  *
- * Stage 2: LittleFS as system volume (CORE:)
- * + basic file commands
+ * Stage 2: LittleFS as CORE: + current directory + cd
  */
 
 #include <Wire.h>
@@ -24,9 +23,7 @@
 #define SERIAL_BAUD         115200
 
 #define OS_NAME             "EspOS"
-#define OS_VERSION          "0.2.0-alpha"
-
-#define SYSTEM_PROMPT       "CORE:\\>"
+#define OS_VERSION          "0.2.1-alpha"
 
 // ====================== FORWARD ======================
 class Kernel;
@@ -218,8 +215,26 @@ public:
     printPrompt();
   }
 
+  // Формируем prompt с учётом текущей директории
   void printPrompt() {
-    _display.printLine(SYSTEM_PROMPT);
+    String prompt = "CORE:";
+    String cwd = g_kernel->getCwd();
+
+    if (cwd == "/") {
+      prompt += "\\>";
+    } else {
+      // /system → \system\>
+      String nice = cwd;
+      nice.replace("/", "\\");
+      prompt += nice + "\\>";
+    }
+
+    // Обрезаем если слишком длинный
+    if (prompt.length() > MAX_LINE_LENGTH) {
+      prompt = prompt.substring(prompt.length() - MAX_LINE_LENGTH);
+    }
+
+    _display.printLine(prompt);
   }
 
   void printResponse(const String& text) {
@@ -234,7 +249,22 @@ public:
 
       if (c == '\n') {
         if (_currentLine.length() > 0) {
-          _display.printLine(String(SYSTEM_PROMPT) + " " + _currentLine);
+          // Показываем введённую команду с текущим prompt
+          String shown = "CORE:";
+          String cwd = g_kernel->getCwd();
+          if (cwd == "/") shown += "\\> ";
+          else {
+            String nice = cwd;
+            nice.replace("/", "\\");
+            shown += nice + "\\> ";
+          }
+          shown += _currentLine;
+
+          if (shown.length() > MAX_LINE_LENGTH) {
+            shown = shown.substring(shown.length() - MAX_LINE_LENGTH);
+          }
+          _display.printLine(shown);
+
           processLine(_currentLine);
           _currentLine = "";
         }
@@ -244,7 +274,7 @@ public:
           _currentLine.remove(_currentLine.length() - 1);
         }
       } else {
-        if (_currentLine.length() < MAX_LINE_LENGTH - 6) {
+        if (_currentLine.length() < 40) {
           _currentLine += c;
         }
       }
@@ -266,24 +296,51 @@ private:
 // ====================== FILE SYSTEM HELPERS ======================
 
 bool ensureSystemFolders() {
-  // Используем .c_str() для совместимости с разными версиями ядра ESP32
-  if (!LittleFS.exists("/system")) {
-    LittleFS.mkdir("/system");
-  }
-  if (!LittleFS.exists("/config")) {
-    LittleFS.mkdir("/config");
-  }
-  if (!LittleFS.exists("/logs")) {
-    LittleFS.mkdir("/logs");
-  }
+  if (!LittleFS.exists("/system")) LittleFS.mkdir("/system");
+  if (!LittleFS.exists("/config"))  LittleFS.mkdir("/config");
+  if (!LittleFS.exists("/logs"))    LittleFS.mkdir("/logs");
   return true;
+}
+
+// Нормализация пути (убираем //, обрабатываем . и ..)
+String normalizePath(String path) {
+  if (path.length() == 0) return "/";
+  if (!path.startsWith("/")) path = "/" + path;
+
+  // Простая обработка
+  while (path.indexOf("//") >= 0) {
+    path.replace("//", "/");
+  }
+  if (path.length() > 1 && path.endsWith("/")) {
+    path.remove(path.length() - 1);
+  }
+  if (path.length() == 0) path = "/";
+  return path;
+}
+
+// Превращает относительный путь в абсолютный с учётом cwd
+String resolvePath(const String& path, const String& cwd) {
+  if (path.startsWith("/")) {
+    return normalizePath(path);
+  }
+  if (path == ".") return cwd;
+  if (path == "..") {
+    if (cwd == "/") return "/";
+    int last = cwd.lastIndexOf('/');
+    if (last <= 0) return "/";
+    return cwd.substring(0, last);
+  }
+
+  // Обычный относительный
+  if (cwd == "/") return normalizePath("/" + path);
+  return normalizePath(cwd + "/" + path);
 }
 
 // ====================== KERNEL ======================
 
 class Kernel {
 public:
-  Kernel() : _shell(_display, _commands) {
+  Kernel() : _shell(_display, _commands), _cwd("/") {
     g_kernel = this;
   }
 
@@ -291,14 +348,12 @@ public:
     Serial.begin(SERIAL_BAUD);
     delay(100);
 
-    // --- Display ---
     if (!_display.begin()) {
       Serial.println("[Kernel] Display init failed!");
       return false;
     }
 
-    // --- LittleFS (CORE:) ---
-    if (!LittleFS.begin(true)) {   // true = format if mount fails
+    if (!LittleFS.begin(true)) {
       Serial.println("[Kernel] LittleFS mount failed!");
       _shell.printResponse("FS mount failed");
     } else {
@@ -321,22 +376,26 @@ public:
   CommandRegistry& commands() { return _commands; }
   Shell& shell() { return _shell; }
 
+  String getCwd() const { return _cwd; }
+  void setCwd(const String& path) { _cwd = path; }
+
 private:
   DisplayManager _display;
   CommandRegistry _commands;
   Shell _shell;
+  String _cwd;   // текущая директория
 
   void registerBuiltinCommands() {
-    // System
     _commands.registerCommand("help",   "List commands",           cmd_help);
     _commands.registerCommand("clear",  "Clear screen",            cmd_clear);
     _commands.registerCommand("info",   "System information",      cmd_info);
     _commands.registerCommand("echo",   "Print text",              cmd_echo);
     _commands.registerCommand("mode",   "Switch display mode",     cmd_mode);
 
-    // File system (CORE:)
     _commands.registerCommand("ls",     "List files",              cmd_ls);
     _commands.registerCommand("dir",    "List files (alias)",      cmd_ls);
+    _commands.registerCommand("cd",     "Change directory",        cmd_cd);
+    _commands.registerCommand("pwd",    "Print working directory", cmd_pwd);
     _commands.registerCommand("cat",    "Show file content",       cmd_cat);
     _commands.registerCommand("write",  "Write text to file",      cmd_write);
     _commands.registerCommand("rm",     "Remove file",             cmd_rm);
@@ -395,11 +454,37 @@ private:
     }
   }
 
-  // ---------- File commands ----------
+  static void cmd_pwd(const String& args) {
+    g_kernel->shell().printResponse(g_kernel->getCwd());
+  }
+
+  static void cmd_cd(const String& args) {
+    String target;
+    if (args.length() == 0 || args == "~") {
+      target = "/";
+    } else {
+      target = resolvePath(args, g_kernel->getCwd());
+    }
+
+    // Проверяем, что это директория
+    File dir = LittleFS.open(target.c_str());
+    if (!dir || !dir.isDirectory()) {
+      g_kernel->shell().printResponse("No such directory");
+      return;
+    }
+    dir.close();
+
+    g_kernel->setCwd(target);
+    // prompt обновится сам при следующем выводе
+  }
 
   static void cmd_ls(const String& args) {
-    String path = args.length() > 0 ? args : "/";
-    if (!path.startsWith("/")) path = "/" + path;
+    String path;
+    if (args.length() == 0) {
+      path = g_kernel->getCwd();
+    } else {
+      path = resolvePath(args, g_kernel->getCwd());
+    }
 
     File root = LittleFS.open(path.c_str());
     if (!root || !root.isDirectory()) {
@@ -433,8 +518,7 @@ private:
       return;
     }
 
-    String path = args;
-    if (!path.startsWith("/")) path = "/" + path;
+    String path = resolvePath(args, g_kernel->getCwd());
 
     File file = LittleFS.open(path.c_str(), "r");
     if (!file || file.isDirectory()) {
@@ -462,9 +546,9 @@ private:
     String filename = args.substring(0, space);
     String text = args.substring(space + 1);
 
-    if (!filename.startsWith("/")) filename = "/" + filename;
+    String path = resolvePath(filename, g_kernel->getCwd());
 
-    File file = LittleFS.open(filename.c_str(), "w");
+    File file = LittleFS.open(path.c_str(), "w");
     if (!file) {
       g_kernel->shell().printResponse("Cannot write file");
       return;
@@ -481,8 +565,7 @@ private:
       return;
     }
 
-    String path = args;
-    if (!path.startsWith("/")) path = "/" + path;
+    String path = resolvePath(args, g_kernel->getCwd());
 
     if (LittleFS.remove(path.c_str())) {
       g_kernel->shell().printResponse("Deleted");
@@ -497,8 +580,7 @@ private:
       return;
     }
 
-    String path = args;
-    if (!path.startsWith("/")) path = "/" + path;
+    String path = resolvePath(args, g_kernel->getCwd());
 
     if (LittleFS.mkdir(path.c_str())) {
       g_kernel->shell().printResponse("Created");

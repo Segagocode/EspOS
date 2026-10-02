@@ -2,11 +2,12 @@
 
 ## Текущая версия
 
-**v0.2.0-alpha** — Stage 2 in progress
+**v0.2.1-alpha**
 
-- LittleFS mounted as **CORE:**
-- Basic file commands working
-- System folders auto-created
+- LittleFS as **CORE:**
+- Current directory + `cd` + `pwd`
+- Relative paths support
+- Dynamic prompt (shows current path)
 
 ---
 
@@ -28,12 +29,12 @@
 - [x] LittleFS as system volume (`CORE:`)
 - [x] Auto-create `/system`, `/config`, `/logs`
 - [x] File commands: `ls`, `cat`, `write`, `rm`, `mkdir`
-- [ ] Better path handling & current directory
+- [x] Better path handling & current directory (`cd`, `pwd`)
 - [ ] Simple config system
 - [ ] SD Card support (`SD:`)
 - [ ] Event Bus
 
-**Target:** `v0.2.0`
+**Target:** `v0.2.0` → next toward full 0.2.0
 
 ---
 
@@ -63,13 +64,12 @@
 ## Future ideas
 
 - **Поддержка русского языка** (кириллица в Shell + OLED)
-- Larger displays (KS0108 128x64 parallel и др.)
+- Larger displays (KS0108 и др.)
 - RFID (RC522)
-- Simple scripting language
-- Power management / deep sleep
-- Mesh networking experiments
-- Graphical UI experiments
+- Simple scripting
+- Power management
+- Mesh experiments
 
 ---
 
-*Last updated: 2026-10-01*
+*Last updated: 2026-10-02*
