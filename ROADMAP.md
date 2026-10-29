@@ -2,67 +2,70 @@
 
 ## Текущая версия
 
-**v0.3.0-alpha** — Переход на 2.8" TFT 240×320
+**v0.3.1-alpha**
 
-- Новый основной дисплей: 2.8" ILI9341 TFT
-- Цветной текстовый Shell
-- Подготовка к SD-карте (слот на плате дисплея)
+- 2.8" TFT 240×320 (ILI9341)
+- Рабочий цветной Shell
+- LittleFS как `CORE:`
+- Команды: ls, cd, pwd, cat, write, rm, mkdir, help, info, mode...
+
+---
+
+## Главный принцип дизайна EspOS
+
+> **Терминал — основа.**  
+> **Графика — дополнение, а не замена.**
+
+Мы сознательно сохраняем мощный текстовый Shell как главный способ управления системой.  
+Графические экраны и элементы добавляются постепенно и только там, где они реально дают удобство, не убивая производительность ESP32.
 
 ---
 
 ## Stage 1 — Foundation ✅
 
-- [x] Kernel, Display Manager, Shell, Command system
+- [x] Kernel + Shell + Command system
 - [x] ArduinoDroid single-file support
 
-**Released:** `v0.1.0-alpha`
-
 ---
 
-## Stage 2 — Storage & System Core ✅ (частично)
+## Stage 2 — Storage ✅ (почти)
 
 - [x] LittleFS as `CORE:`
-- [x] File commands + current directory (`cd`, `pwd`)
-- [ ] SD Card support (`SD:`) — следующий шаг
-- [ ] Simple config system
-- [ ] Event Bus
+- [x] Current directory + path handling
+- [ ] SD Card support (`SD:`) ← следующий большой шаг
 
 ---
 
-## Stage 3 — New Display & UI  ← сейчас здесь
+## Stage 3 — Display & Basic UI  ← сейчас
 
-- [x] Переход на 2.8" TFT 240×320 (ILI9341)
-- [ ] Базовая работа с SD-слотом на плате дисплея
+- [x] Переход на 2.8" TFT 240×320
+- [x] Цветной текстовый Shell
+- [ ] SD-карта через слот на дисплее
 - [ ] Улучшенный Status-экран
-- [ ] Простой файловый менеджер (графический)
-
-**Target:** `v0.3.0`
+- [ ] Простой графический файловый менеджер (список)
 
 ---
 
 ## Stage 4 — Extensibility
 
-- [ ] Plugin / Module system
 - [ ] Buttons + Touch
-- [ ] Связь с Arduino (Uno/Nano/Mini)
-- [ ] Sensor drivers
+- [ ] Plugin system
+- [ ] Связь с Arduino-платами
 
 ---
 
-## Stage 5 — Interpreters & Runtime (CraftOS-inspired)
+## Stage 5 — Runtime (CraftOS-inspired)
 
 - [ ] Lua interpreter
-- [ ] Python (MicroPython / упрощённый)
-- [ ] Возможность запуска пользовательских скриптов с SD/CORE
-- [ ] Простая система пакетов / программ
+- [ ] Возможность запуска скриптов с CORE:/SD:
+- [ ] Простая система программ
 
 ---
 
-## Future ideas
+## Future
 
-- Поддержка русского языка (кириллица)
-- Большие параллельные LCD (KS0108)
-- RFID
+- Русский язык
+- Более сложная графика (осторожно)
 - WiFi tools
 - Mesh
 
