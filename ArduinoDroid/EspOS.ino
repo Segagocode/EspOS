@@ -1,12 +1,13 @@
 /*
- * EspOS v0.3.1-alpha
- * 2.8" TFT 240x320 (ILI9341)
- * Fixed: flickering + Serial input + default argument error
+ * EspOS v0.3.2-alpha
+ * 2.8" TFT 240x320 + Touch (XPT2046)
+ * Improved TUI + On-screen keyboard
  */
 
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
+#include <XPT2046_Touchscreen.h>
 #include <FS.h>
 #include <LittleFS.h>
 
@@ -15,15 +16,18 @@
 #define TFT_DC     2
 #define TFT_RST    4
 
+#define TOUCH_CS   33
+#define TOUCH_IRQ  34
+
 // ====================== CONFIG ======================
-#define MAX_LINES        22
+#define MAX_LINES        16
 #define LINE_HEIGHT      12
 #define MAX_LINE_LEN     38
 
 #define SERIAL_BAUD      115200
 
 #define OS_NAME          "EspOS"
-#define OS_VERSION       "0.3.1-alpha"
+#define OS_VERSION       "0.3.2-alpha"
 
 #define COL_BG           ILI9341_BLACK
 #define COL_TEXT         ILI9341_WHITE
@@ -31,9 +35,13 @@
 #define COL_ERROR        ILI9341_RED
 #define COL_OK           ILI9341_GREEN
 #define COL_DIR          ILI9341_YELLOW
+#define COL_KBD          ILI9341_DARKGREY
+#define COL_KBD_KEY      ILI9341_LIGHTGREY
+#define COL_KBD_TEXT     ILI9341_BLACK
 
-// ====================== GLOBALS ======================
+// ====================== OBJECTS ======================
 Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
+XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 
 String lines[MAX_LINES];
 uint16_t lineColors[MAX_LINES];
@@ -41,6 +49,17 @@ int lineCount = 0;
 
 String cwd = "/";
 String inputBuffer = "";
+bool kbdVisible = false;
+
+// Простая QWERTY раскладка
+const char* kbdRows[] = {
+  "1234567890",
+  "qwertyuiop",
+  "asdfghjkl",
+  "zxcvbnm",
+  " "  // space
+};
+int kbdRowLens[] = {10, 10, 9, 7, 1};
 
 // ====================== DISPLAY ======================
 
@@ -65,24 +84,145 @@ void displayPrint(const String& text, uint16_t color) {
   lineColors[lineCount] = color;
   lineCount++;
 
+  // Если клавиатура открыта — не рисуем текст в нижней зоне
+  int maxY = kbdVisible ? 180 : 320;
   int y = (lineCount - 1) * LINE_HEIGHT + 2;
-  tft.fillRect(0, y, 240, LINE_HEIGHT, COL_BG);
-  tft.setCursor(2, y);
-  tft.setTextColor(color);
-  tft.setTextSize(1);
-  tft.print(t);
+  if (y + LINE_HEIGHT < maxY) {
+    tft.fillRect(0, y, 240, LINE_HEIGHT, COL_BG);
+    tft.setCursor(2, y);
+    tft.setTextColor(color);
+    tft.setTextSize(1);
+    tft.print(t);
+  }
 }
 
 void displayPrompt() {
   String p = "CORE:";
-  if (cwd == "/") {
-    p += "\\>";
-  } else {
+  if (cwd == "/") p += "\\>";
+  else {
     String nice = cwd;
     nice.replace("/", "\\");
     p += nice + "\\>";
   }
   displayPrint(p, COL_PROMPT);
+}
+
+void redrawAll() {
+  tft.fillScreen(COL_BG);
+  int maxLines = kbdVisible ? 14 : MAX_LINES;
+  for (int i = 0; i < lineCount && i < maxLines; i++) {
+    tft.setCursor(2, i * LINE_HEIGHT + 2);
+    tft.setTextColor(lineColors[i]);
+    tft.setTextSize(1);
+    tft.print(lines[i]);
+  }
+  if (kbdVisible) drawKeyboard();
+}
+
+// ====================== KEYBOARD ======================
+
+void drawKeyboard() {
+  int startY = 190;
+  tft.fillRect(0, startY, 240, 130, COL_KBD);
+
+  // Рисуем клавиши
+  for (int r = 0; r < 5; r++) {
+    int keyW = (r == 4) ? 120 : 22;  // пробел шире
+    int startX = (r == 4) ? 60 : 4;
+    int y = startY + 4 + r * 24;
+
+    for (int c = 0; c < kbdRowLens[r]; c++) {
+      int x = startX + c * (keyW + 2);
+      tft.fillRoundRect(x, y, keyW, 20, 3, COL_KBD_KEY);
+      tft.setTextColor(COL_KBD_TEXT);
+      tft.setTextSize(1);
+      tft.setCursor(x + 7, y + 6);
+      if (r == 4) tft.print("SPACE");
+      else tft.print(kbdRows[r][c]);
+    }
+  }
+
+  // Кнопки управления
+  tft.fillRoundRect(180, startY + 100, 50, 22, 3, ILI9341_RED);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(190, startY + 106);
+  tft.print("DEL");
+
+  tft.fillRoundRect(4, startY + 100, 50, 22, 3, ILI9341_GREEN);
+  tft.setCursor(12, startY + 106);
+  tft.print("ENT");
+}
+
+void toggleKeyboard() {
+  kbdVisible = !kbdVisible;
+  redrawAll();
+  if (!kbdVisible) displayPrompt();
+}
+
+// ====================== TOUCH ======================
+
+void handleTouch() {
+  if (!ts.touched()) return;
+
+  TS_Point p = ts.getPoint();
+
+  // Калибровка под 240x320 (примерные значения, может потребоваться подстройка)
+  int x = map(p.x, 200, 3700, 0, 240);
+  int y = map(p.y, 200, 3800, 0, 320);
+
+  if (x < 0) x = 0;
+  if (x > 239) x = 239;
+  if (y < 0) y = 0;
+  if (y > 319) y = 319;
+
+  if (!kbdVisible) {
+    // Тап в нижней части экрана открывает клавиатуру
+    if (y > 280) {
+      toggleKeyboard();
+    }
+    return;
+  }
+
+  // Обработка нажатий по клавиатуре
+  int startY = 190;
+
+  // DEL
+  if (x > 180 && y > startY + 100 && y < startY + 122) {
+    if (inputBuffer.length() > 0) {
+      inputBuffer.remove(inputBuffer.length() - 1);
+    }
+    delay(200);
+    return;
+  }
+
+  // ENTER
+  if (x < 55 && y > startY + 100 && y < startY + 122) {
+    displayPrint("CORE:\\> " + inputBuffer, COL_PROMPT);
+    processCommand(inputBuffer);
+    inputBuffer = "";
+    toggleKeyboard();
+    delay(200);
+    return;
+  }
+
+  // Обычные клавиши
+  for (int r = 0; r < 5; r++) {
+    int keyW = (r == 4) ? 120 : 22;
+    int startX = (r == 4) ? 60 : 4;
+    int ky = startY + 4 + r * 24;
+
+    if (y >= ky && y <= ky + 20) {
+      for (int c = 0; c < kbdRowLens[r]; c++) {
+        int kx = startX + c * (keyW + 2);
+        if (x >= kx && x <= kx + keyW) {
+          if (r == 4) inputBuffer += ' ';
+          else inputBuffer += kbdRows[r][c];
+          delay(180);
+          return;
+        }
+      }
+    }
+  }
 }
 
 // ====================== FS ======================
@@ -115,21 +255,23 @@ void ensureFolders() {
 
 // ====================== COMMANDS ======================
 
+void processCommand(String line);
+
 void cmd_help() {
-  displayPrint("help clear info echo mode", COL_TEXT);
+  displayPrint("help clear info echo mode kbd", COL_TEXT);
   displayPrint("ls cd pwd cat write rm mkdir", COL_TEXT);
 }
 
 void cmd_clear() {
   displayClear();
+  if (kbdVisible) drawKeyboard();
   displayPrompt();
 }
 
 void cmd_info() {
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
   displayPrint("Heap: " + String(ESP.getFreeHeap()), COL_TEXT);
-  displayPrint("CPU: " + String(ESP.getCpuFreqMHz()) + " MHz", COL_TEXT);
-  displayPrint("Display: 2.8\" 240x320", COL_TEXT);
+  displayPrint("Display: 2.8\" 240x320 + Touch", COL_TEXT);
   size_t total = LittleFS.totalBytes();
   size_t used = LittleFS.usedBytes();
   displayPrint("CORE: " + String(used/1024) + "/" + String(total/1024) + " KB", COL_TEXT);
@@ -141,6 +283,7 @@ void cmd_echo(const String& args) {
 
 void cmd_mode(const String& args) {
   if (args == "status") {
+    kbdVisible = false;
     displayClear();
     tft.setTextColor(COL_PROMPT);
     tft.setTextSize(2);
@@ -151,16 +294,17 @@ void cmd_mode(const String& args) {
     tft.setCursor(10, 70);
     tft.println("v" + String(OS_VERSION));
     tft.setCursor(10, 100);
-    tft.println("2.8\" TFT 240x320");
-    tft.setCursor(10, 120);
+    tft.println("2.8\" TFT + Touch");
+    tft.setCursor(10, 130);
     tft.println("Heap: " + String(ESP.getFreeHeap()));
-    tft.setCursor(10, 150);
-    tft.setTextColor(COL_OK);
-    tft.println("SD slot ready");
   } else {
     displayClear();
     displayPrompt();
   }
+}
+
+void cmd_kbd() {
+  toggleKeyboard();
 }
 
 void cmd_pwd() {
@@ -185,23 +329,17 @@ void cmd_ls(const String& args) {
     displayPrint("Not a directory", COL_ERROR);
     return;
   }
-
   File f = root.openNextFile();
   if (!f) {
     displayPrint("(empty)", COL_TEXT);
     return;
   }
-
   while (f) {
     String name = f.name();
     int slash = name.lastIndexOf('/');
     if (slash >= 0) name = name.substring(slash + 1);
-
-    if (f.isDirectory()) {
-      displayPrint("[DIR] " + name, COL_DIR);
-    } else {
-      displayPrint(name + " " + String(f.size()) + "b", COL_TEXT);
-    }
+    if (f.isDirectory()) displayPrint("[DIR] " + name, COL_DIR);
+    else displayPrint(name + " " + String(f.size()) + "b", COL_TEXT);
     f = root.openNextFile();
   }
 }
@@ -234,7 +372,6 @@ void cmd_write(const String& args) {
   String name = args.substring(0, sp);
   String text = args.substring(sp + 1);
   String path = resolvePath(name);
-
   File f = LittleFS.open(path.c_str(), "w");
   if (!f) {
     displayPrint("Cannot write", COL_ERROR);
@@ -250,12 +387,8 @@ void cmd_rm(const String& args) {
     displayPrint("Usage: rm <file>", COL_ERROR);
     return;
   }
-  String path = resolvePath(args);
-  if (LittleFS.remove(path.c_str())) {
-    displayPrint("Deleted", COL_OK);
-  } else {
-    displayPrint("Failed", COL_ERROR);
-  }
+  if (LittleFS.remove(resolvePath(args).c_str())) displayPrint("Deleted", COL_OK);
+  else displayPrint("Failed", COL_ERROR);
 }
 
 void cmd_mkdir(const String& args) {
@@ -263,15 +396,9 @@ void cmd_mkdir(const String& args) {
     displayPrint("Usage: mkdir <dir>", COL_ERROR);
     return;
   }
-  String path = resolvePath(args);
-  if (LittleFS.mkdir(path.c_str())) {
-    displayPrint("Created", COL_OK);
-  } else {
-    displayPrint("Failed", COL_ERROR);
-  }
+  if (LittleFS.mkdir(resolvePath(args).c_str())) displayPrint("Created", COL_OK);
+  else displayPrint("Failed", COL_ERROR);
 }
-
-// ====================== PARSER ======================
 
 void processCommand(String line) {
   line.trim();
@@ -288,6 +415,7 @@ void processCommand(String line) {
   else if (cmd == "info")   cmd_info();
   else if (cmd == "echo")   cmd_echo(args);
   else if (cmd == "mode")   cmd_mode(args);
+  else if (cmd == "kbd")    cmd_kbd();
   else if (cmd == "pwd")    cmd_pwd();
   else if (cmd == "cd")     cmd_cd(args);
   else if (cmd == "ls" || cmd == "dir") cmd_ls(args);
@@ -309,6 +437,9 @@ void setup() {
   tft.fillScreen(COL_BG);
   tft.setTextSize(1);
 
+  ts.begin();
+  ts.setRotation(0);
+
   if (!LittleFS.begin(true)) {
     displayPrint("LittleFS failed", COL_ERROR);
   } else {
@@ -316,16 +447,18 @@ void setup() {
   }
 
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
-  displayPrint("2.8\" TFT ready", COL_OK);
+  displayPrint("TFT + Touch ready", COL_OK);
+  displayPrint("Type 'kbd' or tap bottom", COL_TEXT);
   displayPrompt();
 
-  Serial.println("[EspOS] started");
+  Serial.println("[EspOS] v0.3.2 started");
 }
 
 void loop() {
+  handleTouch();
+
   while (Serial.available()) {
     char c = Serial.read();
-
     if (c == '\r') continue;
 
     if (c == '\n') {
@@ -336,21 +469,16 @@ void loop() {
         shown += nice;
       }
       shown += "\\> " + inputBuffer;
-
       displayPrint(shown, COL_PROMPT);
       processCommand(inputBuffer);
       inputBuffer = "";
       displayPrompt();
     }
     else if (c == 8 || c == 127) {
-      if (inputBuffer.length() > 0) {
-        inputBuffer.remove(inputBuffer.length() - 1);
-      }
+      if (inputBuffer.length() > 0) inputBuffer.remove(inputBuffer.length() - 1);
     }
     else {
-      if (inputBuffer.length() < 60) {
-        inputBuffer += c;
-      }
+      if (inputBuffer.length() < 60) inputBuffer += c;
     }
   }
 }
