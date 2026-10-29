@@ -1,7 +1,7 @@
 /*
  * EspOS v0.3.1-alpha
  * 2.8" TFT 240x320 (ILI9341)
- * Fixed: flickering + Serial input
+ * Fixed: flickering + Serial input + default argument error
  */
 
 #include <SPI.h>
@@ -49,23 +49,11 @@ void displayClear() {
   lineCount = 0;
 }
 
-void displayRedraw() {
-  // Полная перерисовка только когда нужно
-  tft.fillScreen(COL_BG);
-  for (int i = 0; i < lineCount; i++) {
-    tft.setCursor(2, i * LINE_HEIGHT + 2);
-    tft.setTextColor(lineColors[i]);
-    tft.setTextSize(1);
-    tft.print(lines[i]);
-  }
-}
-
-void displayPrint(const String& text, uint16_t color = COL_TEXT) {
+void displayPrint(const String& text, uint16_t color) {
   String t = text;
   if (t.length() > MAX_LINE_LEN) t = t.substring(0, MAX_LINE_LEN);
 
   if (lineCount >= MAX_LINES) {
-    // сдвиг вверх
     for (int i = 1; i < MAX_LINES; i++) {
       lines[i-1] = lines[i];
       lineColors[i-1] = lineColors[i];
@@ -77,7 +65,6 @@ void displayPrint(const String& text, uint16_t color = COL_TEXT) {
   lineColors[lineCount] = color;
   lineCount++;
 
-  // Рисуем только новую строку (без полного clear → меньше мерцания)
   int y = (lineCount - 1) * LINE_HEIGHT + 2;
   tft.fillRect(0, y, 240, LINE_HEIGHT, COL_BG);
   tft.setCursor(2, y);
@@ -140,16 +127,16 @@ void cmd_clear() {
 
 void cmd_info() {
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
-  displayPrint("Heap: " + String(ESP.getFreeHeap()));
-  displayPrint("CPU: " + String(ESP.getCpuFreqMHz()) + " MHz");
-  displayPrint("Display: 2.8\" 240x320");
+  displayPrint("Heap: " + String(ESP.getFreeHeap()), COL_TEXT);
+  displayPrint("CPU: " + String(ESP.getCpuFreqMHz()) + " MHz", COL_TEXT);
+  displayPrint("Display: 2.8\" 240x320", COL_TEXT);
   size_t total = LittleFS.totalBytes();
   size_t used = LittleFS.usedBytes();
-  displayPrint("CORE: " + String(used/1024) + "/" + String(total/1024) + " KB");
+  displayPrint("CORE: " + String(used/1024) + "/" + String(total/1024) + " KB", COL_TEXT);
 }
 
 void cmd_echo(const String& args) {
-  if (args.length()) displayPrint(args);
+  if (args.length()) displayPrint(args, COL_TEXT);
 }
 
 void cmd_mode(const String& args) {
@@ -177,7 +164,7 @@ void cmd_mode(const String& args) {
 }
 
 void cmd_pwd() {
-  displayPrint(cwd);
+  displayPrint(cwd, COL_TEXT);
 }
 
 void cmd_cd(const String& args) {
@@ -201,7 +188,7 @@ void cmd_ls(const String& args) {
 
   File f = root.openNextFile();
   if (!f) {
-    displayPrint("(empty)");
+    displayPrint("(empty)", COL_TEXT);
     return;
   }
 
@@ -213,7 +200,7 @@ void cmd_ls(const String& args) {
     if (f.isDirectory()) {
       displayPrint("[DIR] " + name, COL_DIR);
     } else {
-      displayPrint(name + " " + String(f.size()) + "b");
+      displayPrint(name + " " + String(f.size()) + "b", COL_TEXT);
     }
     f = root.openNextFile();
   }
@@ -233,7 +220,7 @@ void cmd_cat(const String& args) {
   while (f.available()) {
     String line = f.readStringUntil('\n');
     line.trim();
-    if (line.length()) displayPrint(line);
+    if (line.length()) displayPrint(line, COL_TEXT);
   }
   f.close();
 }
@@ -342,7 +329,6 @@ void loop() {
     if (c == '\r') continue;
 
     if (c == '\n') {
-      // Показываем введённую команду
       String shown = "CORE:";
       if (cwd != "/") {
         String nice = cwd;
@@ -356,7 +342,7 @@ void loop() {
       inputBuffer = "";
       displayPrompt();
     }
-    else if (c == 8 || c == 127) { // backspace
+    else if (c == 8 || c == 127) {
       if (inputBuffer.length() > 0) {
         inputBuffer.remove(inputBuffer.length() - 1);
       }
