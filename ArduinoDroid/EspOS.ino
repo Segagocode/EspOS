@@ -1,13 +1,11 @@
 /*
- * EspOS v0.3.2-alpha
- * 2.8" TFT 240x320 + Touch (XPT2046)
- * Improved TUI + On-screen keyboard
+ * EspOS v0.3.3-alpha
+ * 2.8" TFT 240x320 + Touch (raw SPI, no extra library)
  */
 
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
-#include <XPT2046_Touchscreen.h>
 #include <FS.h>
 #include <LittleFS.h>
 
@@ -17,6 +15,9 @@
 #define TFT_RST    4
 
 #define TOUCH_CS   33
+#define TOUCH_CLK  25
+#define TOUCH_DIN  32
+#define TOUCH_DO   35
 #define TOUCH_IRQ  34
 
 // ====================== CONFIG ======================
@@ -27,7 +28,7 @@
 #define SERIAL_BAUD      115200
 
 #define OS_NAME          "EspOS"
-#define OS_VERSION       "0.3.2-alpha"
+#define OS_VERSION       "0.3.3-alpha"
 
 #define COL_BG           ILI9341_BLACK
 #define COL_TEXT         ILI9341_WHITE
@@ -41,7 +42,6 @@
 
 // ====================== OBJECTS ======================
 Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
-XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 
 String lines[MAX_LINES];
 uint16_t lineColors[MAX_LINES];
@@ -51,15 +51,66 @@ String cwd = "/";
 String inputBuffer = "";
 bool kbdVisible = false;
 
-// Простая QWERTY раскладка
 const char* kbdRows[] = {
   "1234567890",
   "qwertyuiop",
   "asdfghjkl",
   "zxcvbnm",
-  " "  // space
+  " "
 };
 int kbdRowLens[] = {10, 10, 9, 7, 1};
+
+// ====================== RAW TOUCH ======================
+
+uint16_t touchRead(uint8_t command) {
+  digitalWrite(TOUCH_CS, LOW);
+  
+  // Отправляем команду
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(TOUCH_DIN, (command >> i) & 1);
+    digitalWrite(TOUCH_CLK, HIGH);
+    digitalWrite(TOUCH_CLK, LOW);
+  }
+  
+  // Читаем 12 бит данных
+  uint16_t data = 0;
+  for (int i = 11; i >= 0; i--) {
+    digitalWrite(TOUCH_CLK, HIGH);
+    if (digitalRead(TOUCH_DO)) data |= (1 << i);
+    digitalWrite(TOUCH_CLK, LOW);
+  }
+  
+  digitalWrite(TOUCH_CS, HIGH);
+  return data;
+}
+
+bool touchPressed() {
+  return digitalRead(TOUCH_IRQ) == LOW;
+}
+
+bool getTouch(int &x, int &y) {
+  if (!touchPressed()) return false;
+
+  // Несколько измерений для стабильности
+  uint16_t xRaw = 0, yRaw = 0;
+  for (int i = 0; i < 4; i++) {
+    xRaw += touchRead(0xD0); // X
+    yRaw += touchRead(0x90); // Y
+  }
+  xRaw /= 4;
+  yRaw /= 4;
+
+  // Примерная калибровка (можно потом подстроить)
+  x = map(xRaw, 200, 3800, 0, 240);
+  y = map(yRaw, 200, 3800, 0, 320);
+
+  if (x < 0) x = 0;
+  if (x > 239) x = 239;
+  if (y < 0) y = 0;
+  if (y > 319) y = 319;
+
+  return true;
+}
 
 // ====================== DISPLAY ======================
 
@@ -84,7 +135,6 @@ void displayPrint(const String& text, uint16_t color) {
   lineColors[lineCount] = color;
   lineCount++;
 
-  // Если клавиатура открыта — не рисуем текст в нижней зоне
   int maxY = kbdVisible ? 180 : 320;
   int y = (lineCount - 1) * LINE_HEIGHT + 2;
   if (y + LINE_HEIGHT < maxY) {
@@ -107,27 +157,12 @@ void displayPrompt() {
   displayPrint(p, COL_PROMPT);
 }
 
-void redrawAll() {
-  tft.fillScreen(COL_BG);
-  int maxLines = kbdVisible ? 14 : MAX_LINES;
-  for (int i = 0; i < lineCount && i < maxLines; i++) {
-    tft.setCursor(2, i * LINE_HEIGHT + 2);
-    tft.setTextColor(lineColors[i]);
-    tft.setTextSize(1);
-    tft.print(lines[i]);
-  }
-  if (kbdVisible) drawKeyboard();
-}
-
-// ====================== KEYBOARD ======================
-
 void drawKeyboard() {
   int startY = 190;
   tft.fillRect(0, startY, 240, 130, COL_KBD);
 
-  // Рисуем клавиши
   for (int r = 0; r < 5; r++) {
-    int keyW = (r == 4) ? 120 : 22;  // пробел шире
+    int keyW = (r == 4) ? 120 : 22;
     int startX = (r == 4) ? 60 : 4;
     int y = startY + 4 + r * 24;
 
@@ -142,7 +177,6 @@ void drawKeyboard() {
     }
   }
 
-  // Кнопки управления
   tft.fillRoundRect(180, startY + 100, 50, 22, 3, ILI9341_RED);
   tft.setTextColor(ILI9341_WHITE);
   tft.setCursor(190, startY + 106);
@@ -153,45 +187,44 @@ void drawKeyboard() {
   tft.print("ENT");
 }
 
+void redrawAll() {
+  tft.fillScreen(COL_BG);
+  int maxLines = kbdVisible ? 14 : MAX_LINES;
+  for (int i = 0; i < lineCount && i < maxLines; i++) {
+    tft.setCursor(2, i * LINE_HEIGHT + 2);
+    tft.setTextColor(lineColors[i]);
+    tft.setTextSize(1);
+    tft.print(lines[i]);
+  }
+  if (kbdVisible) drawKeyboard();
+}
+
 void toggleKeyboard() {
   kbdVisible = !kbdVisible;
   redrawAll();
   if (!kbdVisible) displayPrompt();
 }
 
-// ====================== TOUCH ======================
+// ====================== TOUCH HANDLER ======================
 
 void handleTouch() {
-  if (!ts.touched()) return;
-
-  TS_Point p = ts.getPoint();
-
-  // Калибровка под 240x320 (примерные значения, может потребоваться подстройка)
-  int x = map(p.x, 200, 3700, 0, 240);
-  int y = map(p.y, 200, 3800, 0, 320);
-
-  if (x < 0) x = 0;
-  if (x > 239) x = 239;
-  if (y < 0) y = 0;
-  if (y > 319) y = 319;
+  int x, y;
+  if (!getTouch(x, y)) return;
 
   if (!kbdVisible) {
-    // Тап в нижней части экрана открывает клавиатуру
     if (y > 280) {
       toggleKeyboard();
+      delay(300);
     }
     return;
   }
 
-  // Обработка нажатий по клавиатуре
   int startY = 190;
 
   // DEL
   if (x > 180 && y > startY + 100 && y < startY + 122) {
-    if (inputBuffer.length() > 0) {
-      inputBuffer.remove(inputBuffer.length() - 1);
-    }
-    delay(200);
+    if (inputBuffer.length() > 0) inputBuffer.remove(inputBuffer.length() - 1);
+    delay(250);
     return;
   }
 
@@ -201,11 +234,11 @@ void handleTouch() {
     processCommand(inputBuffer);
     inputBuffer = "";
     toggleKeyboard();
-    delay(200);
+    delay(250);
     return;
   }
 
-  // Обычные клавиши
+  // Клавиши
   for (int r = 0; r < 5; r++) {
     int keyW = (r == 4) ? 120 : 22;
     int startX = (r == 4) ? 60 : 4;
@@ -217,7 +250,7 @@ void handleTouch() {
         if (x >= kx && x <= kx + keyW) {
           if (r == 4) inputBuffer += ' ';
           else inputBuffer += kbdRows[r][c];
-          delay(180);
+          delay(200);
           return;
         }
       }
@@ -271,7 +304,7 @@ void cmd_clear() {
 void cmd_info() {
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
   displayPrint("Heap: " + String(ESP.getFreeHeap()), COL_TEXT);
-  displayPrint("Display: 2.8\" 240x320 + Touch", COL_TEXT);
+  displayPrint("Display: 2.8\" + Touch", COL_TEXT);
   size_t total = LittleFS.totalBytes();
   size_t used = LittleFS.usedBytes();
   displayPrint("CORE: " + String(used/1024) + "/" + String(total/1024) + " KB", COL_TEXT);
@@ -432,13 +465,18 @@ void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(300);
 
+  // Touch pins
+  pinMode(TOUCH_CS, OUTPUT);
+  pinMode(TOUCH_CLK, OUTPUT);
+  pinMode(TOUCH_DIN, OUTPUT);
+  pinMode(TOUCH_DO, INPUT);
+  pinMode(TOUCH_IRQ, INPUT);
+  digitalWrite(TOUCH_CS, HIGH);
+
   tft.begin();
   tft.setRotation(0);
   tft.fillScreen(COL_BG);
   tft.setTextSize(1);
-
-  ts.begin();
-  ts.setRotation(0);
 
   if (!LittleFS.begin(true)) {
     displayPrint("LittleFS failed", COL_ERROR);
@@ -448,10 +486,10 @@ void setup() {
 
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
   displayPrint("TFT + Touch ready", COL_OK);
-  displayPrint("Type 'kbd' or tap bottom", COL_TEXT);
+  displayPrint("Tap bottom or type kbd", COL_TEXT);
   displayPrompt();
 
-  Serial.println("[EspOS] v0.3.2 started");
+  Serial.println("[EspOS] v0.3.3 started");
 }
 
 void loop() {
