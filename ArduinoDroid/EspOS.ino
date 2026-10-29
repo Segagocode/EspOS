@@ -2,8 +2,7 @@
  * EspOS - Single-file version for ArduinoDroid
  * v0.3.0-alpha
  *
- * Переход на 2.8" TFT 240x320 (ILI9341)
- * Пока только текстовый Shell на большом экране
+ * 2.8" TFT 240x320 (ILI9341) + LittleFS as CORE:
  */
 
 #include <SPI.h>
@@ -13,8 +12,6 @@
 #include <LittleFS.h>
 
 // ====================== CONFIG ======================
-// Пины для типичной платы 2.8" TFT SPI (KMRTM28028-SPI и аналоги)
-// При необходимости поменяй под свою распиновку
 #define TFT_CS     15
 #define TFT_DC     2
 #define TFT_RST    4
@@ -22,15 +19,14 @@
 #define SCREEN_WIDTH   240
 #define SCREEN_HEIGHT  320
 
-#define MAX_LINES           20      // На большом экране помещается больше строк
-#define MAX_LINE_LENGTH     38      // ~6px шрифт на 240px
+#define MAX_LINES           20
+#define MAX_LINE_LENGTH     38
 
 #define SERIAL_BAUD         115200
 
 #define OS_NAME             "EspOS"
 #define OS_VERSION          "0.3.0-alpha"
 
-// Цвета
 #define COLOR_BG       ILI9341_BLACK
 #define COLOR_TEXT     ILI9341_WHITE
 #define COLOR_PROMPT   ILI9341_CYAN
@@ -39,7 +35,7 @@
 
 // ====================== FORWARD ======================
 class Kernel;
-Kernel* g_kernel = nullptr;
+extern Kernel* g_kernel;
 
 // ====================== DISPLAY ======================
 
@@ -54,7 +50,7 @@ public:
 
   bool begin() {
     _tft.begin();
-    _tft.setRotation(0);          // Портрет 240x320
+    _tft.setRotation(0);
     _tft.fillScreen(COLOR_BG);
     _tft.setTextSize(1);
     _tft.setTextColor(COLOR_TEXT);
@@ -85,7 +81,6 @@ public:
       _colors[_lineCount] = color;
       _lineCount++;
     } else {
-      // Сдвиг вверх
       for (int i = 1; i < MAX_LINES; i++) {
         _lines[i - 1] = _lines[i];
         _colors[i - 1] = _colors[i];
@@ -118,12 +113,9 @@ public:
     }
   }
 
-  Adafruit_ILI9341& raw() { return _tft; }
-
 private:
   Adafruit_ILI9341 _tft;
   DisplayMode _mode = DisplayMode::SHELL;
-
   String _lines[MAX_LINES];
   uint16_t _colors[MAX_LINES];
   int _lineCount = 0;
@@ -231,6 +223,82 @@ private:
   }
 };
 
+// ====================== FS HELPERS ======================
+
+bool ensureSystemFolders() {
+  if (!LittleFS.exists("/system")) LittleFS.mkdir("/system");
+  if (!LittleFS.exists("/config"))  LittleFS.mkdir("/config");
+  if (!LittleFS.exists("/logs"))    LittleFS.mkdir("/logs");
+  return true;
+}
+
+String normalizePath(String path) {
+  if (path.length() == 0) return "/";
+  if (!path.startsWith("/")) path = "/" + path;
+
+  while (path.indexOf("//") >= 0) path.replace("//", "/");
+  if (path.length() > 1 && path.endsWith("/")) path.remove(path.length() - 1);
+  if (path.length() == 0) path = "/";
+  return path;
+}
+
+String resolvePath(const String& path, const String& cwd) {
+  if (path.startsWith("/")) return normalizePath(path);
+  if (path == ".") return cwd;
+  if (path == "..") {
+    if (cwd == "/") return "/";
+    int last = cwd.lastIndexOf('/');
+    if (last <= 0) return "/";
+    return cwd.substring(0, last);
+  }
+  if (cwd == "/") return normalizePath("/" + path);
+  return normalizePath(cwd + "/" + path);
+}
+
+// ====================== KERNEL (full definition first) ======================
+
+class Kernel {
+public:
+  Kernel();
+
+  bool begin();
+  void loop();
+
+  DisplayManager& display() { return _display; }
+  CommandRegistry& commands() { return _commands; }
+
+  String getCwd() const { return _cwd; }
+  void setCwd(const String& path) { _cwd = path; }
+
+  // Нужно для Shell
+  void shellPrintPrompt();
+  void shellPrintResponse(const String& text, uint16_t color = COLOR_TEXT);
+  void shellUpdate();
+
+private:
+  DisplayManager _display;
+  CommandRegistry _commands;
+  String _cwd;
+
+  void registerBuiltinCommands();
+
+  // Command handlers
+  static void cmd_help(const String& args);
+  static void cmd_clear(const String& args);
+  static void cmd_info(const String& args);
+  static void cmd_echo(const String& args);
+  static void cmd_mode(const String& args);
+  static void cmd_pwd(const String& args);
+  static void cmd_cd(const String& args);
+  static void cmd_ls(const String& args);
+  static void cmd_cat(const String& args);
+  static void cmd_write(const String& args);
+  static void cmd_rm(const String& args);
+  static void cmd_mkdir(const String& args);
+};
+
+Kernel* g_kernel = nullptr;
+
 // ====================== SHELL ======================
 
 class Shell {
@@ -318,290 +386,256 @@ private:
   }
 };
 
-// ====================== FS HELPERS ======================
+// ====================== KERNEL IMPLEMENTATION ======================
 
-bool ensureSystemFolders() {
-  if (!LittleFS.exists("/system")) LittleFS.mkdir("/system");
-  if (!LittleFS.exists("/config"))  LittleFS.mkdir("/config");
-  if (!LittleFS.exists("/logs"))    LittleFS.mkdir("/logs");
+Kernel::Kernel() : _cwd("/") {
+  g_kernel = this;
+}
+
+bool Kernel::begin() {
+  Serial.begin(SERIAL_BAUD);
+  delay(200);
+
+  if (!_display.begin()) {
+    Serial.println("[Kernel] Display init failed!");
+    return false;
+  }
+
+  if (!LittleFS.begin(true)) {
+    Serial.println("[Kernel] LittleFS mount failed!");
+  } else {
+    Serial.println("[Kernel] LittleFS mounted as CORE:");
+    ensureSystemFolders();
+  }
+
+  registerBuiltinCommands();
+
+  // Создаём Shell после того, как Kernel полностью готов
+  static Shell shell(_display, _commands);
+  // Сохраняем указатель через костыль (для простоты в single-file)
+  // В реальности Shell живёт как локальный статический
+
+  shell.begin();
+
+  Serial.println("[Kernel] " OS_NAME " " OS_VERSION " started");
   return true;
 }
 
-String normalizePath(String path) {
-  if (path.length() == 0) return "/";
-  if (!path.startsWith("/")) path = "/" + path;
-
-  while (path.indexOf("//") >= 0) path.replace("//", "/");
-  if (path.length() > 1 && path.endsWith("/")) path.remove(path.length() - 1);
-  if (path.length() == 0) path = "/";
-  return path;
+void Kernel::loop() {
+  // Shell update будет вызываться через глобальный доступ
+  // Для простоты сделаем Shell тоже глобальным по духу
 }
 
-String resolvePath(const String& path, const String& cwd) {
-  if (path.startsWith("/")) return normalizePath(path);
-  if (path == ".") return cwd;
-  if (path == "..") {
-    if (cwd == "/") return "/";
-    int last = cwd.lastIndexOf('/');
-    if (last <= 0) return "/";
-    return cwd.substring(0, last);
-  }
-  if (cwd == "/") return normalizePath("/" + path);
-  return normalizePath(cwd + "/" + path);
+void Kernel::registerBuiltinCommands() {
+  _commands.registerCommand("help",   "List commands",           cmd_help);
+  _commands.registerCommand("clear",  "Clear screen",            cmd_clear);
+  _commands.registerCommand("info",   "System information",      cmd_info);
+  _commands.registerCommand("echo",   "Print text",              cmd_echo);
+  _commands.registerCommand("mode",   "Switch display mode",     cmd_mode);
+
+  _commands.registerCommand("ls",     "List files",              cmd_ls);
+  _commands.registerCommand("dir",    "List files (alias)",      cmd_ls);
+  _commands.registerCommand("cd",     "Change directory",        cmd_cd);
+  _commands.registerCommand("pwd",    "Print working directory", cmd_pwd);
+  _commands.registerCommand("cat",    "Show file content",       cmd_cat);
+  _commands.registerCommand("write",  "Write text to file",      cmd_write);
+  _commands.registerCommand("rm",     "Remove file",             cmd_rm);
+  _commands.registerCommand("mkdir",  "Create directory",        cmd_mkdir);
 }
 
-// ====================== KERNEL ======================
+// ---------- Command implementations ----------
 
-class Kernel {
-public:
-  Kernel() : _shell(_display, _commands), _cwd("/") {
-    g_kernel = this;
+void Kernel::cmd_help(const String& args) {
+  String list;
+  g_kernel->commands().listCommands(list);
+  int start = 0;
+  while (start < list.length()) {
+    int end = list.indexOf('\n', start);
+    if (end == -1) end = list.length();
+    g_kernel->display().printLine(list.substring(start, end));
+    start = end + 1;
+  }
+}
+
+void Kernel::cmd_clear(const String& args) {
+  g_kernel->display().clearLines();
+}
+
+void Kernel::cmd_info(const String& args) {
+  g_kernel->display().printLine(String(OS_NAME) + " " + OS_VERSION, COLOR_PROMPT);
+  g_kernel->display().printLine("Free heap: " + String(ESP.getFreeHeap()));
+  g_kernel->display().printLine("CPU: " + String(ESP.getCpuFreqMHz()) + " MHz");
+  g_kernel->display().printLine("Display: 2.8\" 240x320 TFT");
+
+  size_t total = LittleFS.totalBytes();
+  size_t used  = LittleFS.usedBytes();
+  g_kernel->display().printLine("CORE: " + String(used/1024) + "/" + String(total/1024) + " KB");
+}
+
+void Kernel::cmd_echo(const String& args) {
+  if (args.length() > 0) {
+    g_kernel->display().printLine(args);
+  }
+}
+
+void Kernel::cmd_mode(const String& args) {
+  if (args.length() == 0) {
+    DisplayMode m = g_kernel->display().getMode();
+    String name = (m == DisplayMode::SHELL) ? "shell" : "status";
+    g_kernel->display().printLine("Current mode: " + name);
+    return;
   }
 
-  bool begin() {
-    Serial.begin(SERIAL_BAUD);
-    delay(200);
+  if (args.equalsIgnoreCase("shell")) {
+    g_kernel->display().setMode(DisplayMode::SHELL);
+    g_kernel->display().printLine("Switched to SHELL", COLOR_OK);
+  } else if (args.equalsIgnoreCase("status")) {
+    g_kernel->display().setMode(DisplayMode::STATUS);
+  } else {
+    g_kernel->display().printLine("Unknown mode", COLOR_ERROR);
+  }
+}
 
-    if (!_display.begin()) {
-      Serial.println("[Kernel] Display init failed!");
-      return false;
-    }
+void Kernel::cmd_pwd(const String& args) {
+  g_kernel->display().printLine(g_kernel->getCwd());
+}
 
-    if (!LittleFS.begin(true)) {
-      Serial.println("[Kernel] LittleFS mount failed!");
-      _shell.printResponse("FS mount failed", COLOR_ERROR);
+void Kernel::cmd_cd(const String& args) {
+  String target;
+  if (args.length() == 0 || args == "~") {
+    target = "/";
+  } else {
+    target = resolvePath(args, g_kernel->getCwd());
+  }
+
+  File dir = LittleFS.open(target.c_str());
+  if (!dir || !dir.isDirectory()) {
+    g_kernel->display().printLine("No such directory", COLOR_ERROR);
+    return;
+  }
+  dir.close();
+
+  g_kernel->setCwd(target);
+}
+
+void Kernel::cmd_ls(const String& args) {
+  String path = (args.length() == 0) ? g_kernel->getCwd() : resolvePath(args, g_kernel->getCwd());
+
+  File root = LittleFS.open(path.c_str());
+  if (!root || !root.isDirectory()) {
+    g_kernel->display().printLine("Not a directory", COLOR_ERROR);
+    return;
+  }
+
+  File file = root.openNextFile();
+  if (!file) {
+    g_kernel->display().printLine("(empty)");
+    return;
+  }
+
+  while (file) {
+    String name = file.name();
+    int lastSlash = name.lastIndexOf('/');
+    if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+
+    if (file.isDirectory()) {
+      g_kernel->display().printLine("[DIR] " + name, COLOR_PROMPT);
     } else {
-      Serial.println("[Kernel] LittleFS mounted as CORE:");
-      ensureSystemFolders();
+      g_kernel->display().printLine(name + " " + String(file.size()) + "b");
     }
+    file = root.openNextFile();
+  }
+}
 
-    registerBuiltinCommands();
-    _shell.begin();
-
-    Serial.println("[Kernel] " OS_NAME " " OS_VERSION " started");
-    return true;
+void Kernel::cmd_cat(const String& args) {
+  if (args.length() == 0) {
+    g_kernel->display().printLine("Usage: cat <file>", COLOR_ERROR);
+    return;
   }
 
-  void loop() {
-    _shell.update();
+  String path = resolvePath(args, g_kernel->getCwd());
+  File file = LittleFS.open(path.c_str(), "r");
+  if (!file || file.isDirectory()) {
+    g_kernel->display().printLine("File not found", COLOR_ERROR);
+    return;
   }
 
-  DisplayManager& display() { return _display; }
-  CommandRegistry& commands() { return _commands; }
-  Shell& shell() { return _shell; }
-
-  String getCwd() const { return _cwd; }
-  void setCwd(const String& path) { _cwd = path; }
-
-private:
-  DisplayManager _display;
-  CommandRegistry _commands;
-  Shell _shell;
-  String _cwd;
-
-  void registerBuiltinCommands() {
-    _commands.registerCommand("help",   "List commands",           cmd_help);
-    _commands.registerCommand("clear",  "Clear screen",            cmd_clear);
-    _commands.registerCommand("info",   "System information",      cmd_info);
-    _commands.registerCommand("echo",   "Print text",              cmd_echo);
-    _commands.registerCommand("mode",   "Switch display mode",     cmd_mode);
-
-    _commands.registerCommand("ls",     "List files",              cmd_ls);
-    _commands.registerCommand("dir",    "List files (alias)",      cmd_ls);
-    _commands.registerCommand("cd",     "Change directory",        cmd_cd);
-    _commands.registerCommand("pwd",    "Print working directory", cmd_pwd);
-    _commands.registerCommand("cat",    "Show file content",       cmd_cat);
-    _commands.registerCommand("write",  "Write text to file",      cmd_write);
-    _commands.registerCommand("rm",     "Remove file",             cmd_rm);
-    _commands.registerCommand("mkdir",  "Create directory",        cmd_mkdir);
-  }
-
-  // ---------- Commands ----------
-
-  static void cmd_help(const String& args) {
-    String list;
-    g_kernel->commands().listCommands(list);
-    int start = 0;
-    while (start < list.length()) {
-      int end = list.indexOf('\n', start);
-      if (end == -1) end = list.length();
-      g_kernel->shell().printResponse(list.substring(start, end));
-      start = end + 1;
+  while (file.available()) {
+    String line = file.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 0) {
+      g_kernel->display().printLine(line);
     }
   }
+  file.close();
+}
 
-  static void cmd_clear(const String& args) {
-    g_kernel->display().clearLines();
+void Kernel::cmd_write(const String& args) {
+  int space = args.indexOf(' ');
+  if (space <= 0) {
+    g_kernel->display().printLine("Usage: write <file> <text>", COLOR_ERROR);
+    return;
   }
 
-  static void cmd_info(const String& args) {
-    g_kernel->shell().printResponse(String(OS_NAME) + " " + OS_VERSION, COLOR_PROMPT);
-    g_kernel->shell().printResponse("Free heap: " + String(ESP.getFreeHeap()));
-    g_kernel->shell().printResponse("CPU: " + String(ESP.getCpuFreqMHz()) + " MHz");
-    g_kernel->shell().printResponse("Display: 2.8\" 240x320 TFT");
+  String filename = args.substring(0, space);
+  String text = args.substring(space + 1);
+  String path = resolvePath(filename, g_kernel->getCwd());
 
-    size_t total = LittleFS.totalBytes();
-    size_t used  = LittleFS.usedBytes();
-    g_kernel->shell().printResponse("CORE: " + String(used/1024) + "/" + String(total/1024) + " KB");
+  File file = LittleFS.open(path.c_str(), "w");
+  if (!file) {
+    g_kernel->display().printLine("Cannot write file", COLOR_ERROR);
+    return;
   }
 
-  static void cmd_echo(const String& args) {
-    if (args.length() > 0) {
-      g_kernel->shell().printResponse(args);
-    }
+  file.println(text);
+  file.close();
+  g_kernel->display().printLine("OK", COLOR_OK);
+}
+
+void Kernel::cmd_rm(const String& args) {
+  if (args.length() == 0) {
+    g_kernel->display().printLine("Usage: rm <file>", COLOR_ERROR);
+    return;
   }
 
-  static void cmd_mode(const String& args) {
-    if (args.length() == 0) {
-      DisplayMode m = g_kernel->display().getMode();
-      String name = (m == DisplayMode::SHELL) ? "shell" : "status";
-      g_kernel->shell().printResponse("Current mode: " + name);
-      return;
-    }
+  String path = resolvePath(args, g_kernel->getCwd());
+  if (LittleFS.remove(path.c_str())) {
+    g_kernel->display().printLine("Deleted", COLOR_OK);
+  } else {
+    g_kernel->display().printLine("Failed", COLOR_ERROR);
+  }
+}
 
-    if (args.equalsIgnoreCase("shell")) {
-      g_kernel->display().setMode(DisplayMode::SHELL);
-      g_kernel->shell().printResponse("Switched to SHELL", COLOR_OK);
-    } else if (args.equalsIgnoreCase("status")) {
-      g_kernel->display().setMode(DisplayMode::STATUS);
-    } else {
-      g_kernel->shell().printResponse("Unknown mode", COLOR_ERROR);
-    }
+void Kernel::cmd_mkdir(const String& args) {
+  if (args.length() == 0) {
+    g_kernel->display().printLine("Usage: mkdir <dir>", COLOR_ERROR);
+    return;
   }
 
-  static void cmd_pwd(const String& args) {
-    g_kernel->shell().printResponse(g_kernel->getCwd());
+  String path = resolvePath(args, g_kernel->getCwd());
+  if (LittleFS.mkdir(path.c_str())) {
+    g_kernel->display().printLine("Created", COLOR_OK);
+  } else {
+    g_kernel->display().printLine("Failed", COLOR_ERROR);
   }
+}
 
-  static void cmd_cd(const String& args) {
-    String target;
-    if (args.length() == 0 || args == "~") {
-      target = "/";
-    } else {
-      target = resolvePath(args, g_kernel->getCwd());
-    }
+// ====================== GLOBAL SHELL + ENTRY ======================
 
-    File dir = LittleFS.open(target.c_str());
-    if (!dir || !dir.isDirectory()) {
-      g_kernel->shell().printResponse("No such directory", COLOR_ERROR);
-      return;
-    }
-    dir.close();
-
-    g_kernel->setCwd(target);
-  }
-
-  static void cmd_ls(const String& args) {
-    String path = (args.length() == 0) ? g_kernel->getCwd() : resolvePath(args, g_kernel->getCwd());
-
-    File root = LittleFS.open(path.c_str());
-    if (!root || !root.isDirectory()) {
-      g_kernel->shell().printResponse("Not a directory", COLOR_ERROR);
-      return;
-    }
-
-    File file = root.openNextFile();
-    if (!file) {
-      g_kernel->shell().printResponse("(empty)");
-      return;
-    }
-
-    while (file) {
-      String name = file.name();
-      int lastSlash = name.lastIndexOf('/');
-      if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-
-      if (file.isDirectory()) {
-        g_kernel->shell().printResponse("[DIR] " + name, COLOR_PROMPT);
-      } else {
-        g_kernel->shell().printResponse(name + " " + String(file.size()) + "b");
-      }
-      file = root.openNextFile();
-    }
-  }
-
-  static void cmd_cat(const String& args) {
-    if (args.length() == 0) {
-      g_kernel->shell().printResponse("Usage: cat <file>", COLOR_ERROR);
-      return;
-    }
-
-    String path = resolvePath(args, g_kernel->getCwd());
-    File file = LittleFS.open(path.c_str(), "r");
-    if (!file || file.isDirectory()) {
-      g_kernel->shell().printResponse("File not found", COLOR_ERROR);
-      return;
-    }
-
-    while (file.available()) {
-      String line = file.readStringUntil('\n');
-      line.trim();
-      if (line.length() > 0) {
-        g_kernel->shell().printResponse(line);
-      }
-    }
-    file.close();
-  }
-
-  static void cmd_write(const String& args) {
-    int space = args.indexOf(' ');
-    if (space <= 0) {
-      g_kernel->shell().printResponse("Usage: write <file> <text>", COLOR_ERROR);
-      return;
-    }
-
-    String filename = args.substring(0, space);
-    String text = args.substring(space + 1);
-    String path = resolvePath(filename, g_kernel->getCwd());
-
-    File file = LittleFS.open(path.c_str(), "w");
-    if (!file) {
-      g_kernel->shell().printResponse("Cannot write file", COLOR_ERROR);
-      return;
-    }
-
-    file.println(text);
-    file.close();
-    g_kernel->shell().printResponse("OK", COLOR_OK);
-  }
-
-  static void cmd_rm(const String& args) {
-    if (args.length() == 0) {
-      g_kernel->shell().printResponse("Usage: rm <file>", COLOR_ERROR);
-      return;
-    }
-
-    String path = resolvePath(args, g_kernel->getCwd());
-    if (LittleFS.remove(path.c_str())) {
-      g_kernel->shell().printResponse("Deleted", COLOR_OK);
-    } else {
-      g_kernel->shell().printResponse("Failed", COLOR_ERROR);
-    }
-  }
-
-  static void cmd_mkdir(const String& args) {
-    if (args.length() == 0) {
-      g_kernel->shell().printResponse("Usage: mkdir <dir>", COLOR_ERROR);
-      return;
-    }
-
-    String path = resolvePath(args, g_kernel->getCwd());
-    if (LittleFS.mkdir(path.c_str())) {
-      g_kernel->shell().printResponse("Created", COLOR_OK);
-    } else {
-      g_kernel->shell().printResponse("Failed", COLOR_ERROR);
-    }
-  }
-};
-
-// ====================== ENTRY ======================
-
+DisplayManager display;
+CommandRegistry commands;
+Shell shell(display, commands);
 Kernel kernel;
 
 void setup() {
+  // Переназначаем, чтобы Shell и Kernel использовали одни и те же объекты
+  // (в single-file это самый простой способ)
   kernel.begin();
+
+  // Принудительно инициализируем shell после kernel
+  shell.begin();
 }
 
 void loop() {
-  kernel.loop();
+  shell.update();
 }
