@@ -1,29 +1,41 @@
 /*
  * EspOS - Single-file version for ArduinoDroid
- * v0.2.1-alpha
+ * v0.3.0-alpha
  *
- * Stage 2: LittleFS as CORE: + current directory + cd
+ * Переход на 2.8" TFT 240x320 (ILI9341)
+ * Пока только текстовый Shell на большом экране
  */
 
-#include <Wire.h>
+#include <SPI.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <Adafruit_ILI9341.h>
 #include <FS.h>
 #include <LittleFS.h>
 
 // ====================== CONFIG ======================
-#define SCREEN_WIDTH        128
-#define SCREEN_HEIGHT       64
-#define OLED_ADDRESS        0x3C
-#define OLED_RESET_PIN      -1
+// Пины для типичной платы 2.8" TFT SPI (KMRTM28028-SPI и аналоги)
+// При необходимости поменяй под свою распиновку
+#define TFT_CS     15
+#define TFT_DC     2
+#define TFT_RST    4
 
-#define MAX_LINES           8
-#define MAX_LINE_LENGTH     21
+#define SCREEN_WIDTH   240
+#define SCREEN_HEIGHT  320
+
+#define MAX_LINES           20      // На большом экране помещается больше строк
+#define MAX_LINE_LENGTH     38      // ~6px шрифт на 240px
 
 #define SERIAL_BAUD         115200
 
 #define OS_NAME             "EspOS"
-#define OS_VERSION          "0.2.1-alpha"
+#define OS_VERSION          "0.3.0-alpha"
+
+// Цвета
+#define COLOR_BG       ILI9341_BLACK
+#define COLOR_TEXT     ILI9341_WHITE
+#define COLOR_PROMPT   ILI9341_CYAN
+#define COLOR_ERROR    ILI9341_RED
+#define COLOR_OK       ILI9341_GREEN
 
 // ====================== FORWARD ======================
 class Kernel;
@@ -38,22 +50,19 @@ enum class DisplayMode {
 
 class DisplayManager {
 public:
-  DisplayManager() : _display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET_PIN) {}
+  DisplayManager() : _tft(TFT_CS, TFT_DC, TFT_RST) {}
 
   bool begin() {
-    if (!_display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
-      return false;
-    }
-    _display.clearDisplay();
-    _display.setTextSize(1);
-    _display.setTextColor(SSD1306_WHITE);
-    _display.display();
+    _tft.begin();
+    _tft.setRotation(0);          // Портрет 240x320
+    _tft.fillScreen(COLOR_BG);
+    _tft.setTextSize(1);
+    _tft.setTextColor(COLOR_TEXT);
     return true;
   }
 
   void clear() {
-    _display.clearDisplay();
-    _display.display();
+    _tft.fillScreen(COLOR_BG);
   }
 
   void setMode(DisplayMode mode) {
@@ -65,7 +74,7 @@ public:
     return _mode;
   }
 
-  void printLine(const String& text) {
+  void printLine(const String& text, uint16_t color = COLOR_TEXT) {
     String truncated = text;
     if (truncated.length() > MAX_LINE_LENGTH) {
       truncated = truncated.substring(0, MAX_LINE_LENGTH);
@@ -73,12 +82,16 @@ public:
 
     if (_lineCount < MAX_LINES) {
       _lines[_lineCount] = truncated;
+      _colors[_lineCount] = color;
       _lineCount++;
     } else {
+      // Сдвиг вверх
       for (int i = 1; i < MAX_LINES; i++) {
         _lines[i - 1] = _lines[i];
+        _colors[i - 1] = _colors[i];
       }
       _lines[MAX_LINES - 1] = truncated;
+      _colors[MAX_LINES - 1] = color;
     }
     redraw();
   }
@@ -87,15 +100,13 @@ public:
     _lineCount = 0;
     for (int i = 0; i < MAX_LINES; i++) {
       _lines[i] = "";
+      _colors[i] = COLOR_TEXT;
     }
     redraw();
   }
 
   void redraw() {
-    _display.clearDisplay();
-    _display.setTextSize(1);
-    _display.setTextColor(SSD1306_WHITE);
-    _display.setCursor(0, 0);
+    _tft.fillScreen(COLOR_BG);
 
     switch (_mode) {
       case DisplayMode::SHELL:
@@ -105,32 +116,50 @@ public:
         drawStatus();
         break;
     }
-
-    _display.display();
   }
 
+  Adafruit_ILI9341& raw() { return _tft; }
+
 private:
-  Adafruit_SSD1306 _display;
+  Adafruit_ILI9341 _tft;
   DisplayMode _mode = DisplayMode::SHELL;
+
   String _lines[MAX_LINES];
+  uint16_t _colors[MAX_LINES];
   int _lineCount = 0;
 
   void drawShell() {
     for (int i = 0; i < _lineCount; i++) {
-      _display.setCursor(0, i * 8);
-      _display.print(_lines[i]);
+      _tft.setCursor(2, i * 12 + 2);
+      _tft.setTextColor(_colors[i]);
+      _tft.print(_lines[i]);
     }
   }
 
   void drawStatus() {
-    _display.setCursor(0, 0);
-    _display.println(OS_NAME);
-    _display.print("v");
-    _display.println(OS_VERSION);
-    _display.println("------------");
-    _display.println("Mode: STATUS");
-    _display.println("Heap: " + String(ESP.getFreeHeap()));
-    _display.println("FS: LittleFS");
+    _tft.setTextColor(COLOR_PROMPT);
+    _tft.setCursor(10, 20);
+    _tft.setTextSize(2);
+    _tft.println(OS_NAME);
+
+    _tft.setTextSize(1);
+    _tft.setTextColor(COLOR_TEXT);
+    _tft.setCursor(10, 55);
+    _tft.print("v");
+    _tft.println(OS_VERSION);
+
+    _tft.setCursor(10, 80);
+    _tft.println("Display: 2.8\" TFT 240x320");
+
+    _tft.setCursor(10, 100);
+    _tft.println("Heap: " + String(ESP.getFreeHeap()));
+
+    _tft.setCursor(10, 120);
+    _tft.println("FS: LittleFS (CORE:)");
+
+    _tft.setCursor(10, 150);
+    _tft.setTextColor(COLOR_OK);
+    _tft.println("Ready for SD card");
   }
 };
 
@@ -215,7 +244,6 @@ public:
     printPrompt();
   }
 
-  // Формируем prompt с учётом текущей директории
   void printPrompt() {
     String prompt = "CORE:";
     String cwd = g_kernel->getCwd();
@@ -223,22 +251,20 @@ public:
     if (cwd == "/") {
       prompt += "\\>";
     } else {
-      // /system → \system\>
       String nice = cwd;
       nice.replace("/", "\\");
       prompt += nice + "\\>";
     }
 
-    // Обрезаем если слишком длинный
     if (prompt.length() > MAX_LINE_LENGTH) {
       prompt = prompt.substring(prompt.length() - MAX_LINE_LENGTH);
     }
 
-    _display.printLine(prompt);
+    _display.printLine(prompt, COLOR_PROMPT);
   }
 
-  void printResponse(const String& text) {
-    _display.printLine(text);
+  void printResponse(const String& text, uint16_t color = COLOR_TEXT) {
+    _display.printLine(text, color);
   }
 
   void update() {
@@ -249,7 +275,6 @@ public:
 
       if (c == '\n') {
         if (_currentLine.length() > 0) {
-          // Показываем введённую команду с текущим prompt
           String shown = "CORE:";
           String cwd = g_kernel->getCwd();
           if (cwd == "/") shown += "\\> ";
@@ -263,7 +288,7 @@ public:
           if (shown.length() > MAX_LINE_LENGTH) {
             shown = shown.substring(shown.length() - MAX_LINE_LENGTH);
           }
-          _display.printLine(shown);
+          _display.printLine(shown, COLOR_PROMPT);
 
           processLine(_currentLine);
           _currentLine = "";
@@ -274,7 +299,7 @@ public:
           _currentLine.remove(_currentLine.length() - 1);
         }
       } else {
-        if (_currentLine.length() < 40) {
+        if (_currentLine.length() < 50) {
           _currentLine += c;
         }
       }
@@ -288,12 +313,12 @@ private:
 
   void processLine(const String& line) {
     if (!_registry.execute(line)) {
-      _display.printLine("Unknown command");
+      _display.printLine("Unknown command", COLOR_ERROR);
     }
   }
 };
 
-// ====================== FILE SYSTEM HELPERS ======================
+// ====================== FS HELPERS ======================
 
 bool ensureSystemFolders() {
   if (!LittleFS.exists("/system")) LittleFS.mkdir("/system");
@@ -302,27 +327,18 @@ bool ensureSystemFolders() {
   return true;
 }
 
-// Нормализация пути (убираем //, обрабатываем . и ..)
 String normalizePath(String path) {
   if (path.length() == 0) return "/";
   if (!path.startsWith("/")) path = "/" + path;
 
-  // Простая обработка
-  while (path.indexOf("//") >= 0) {
-    path.replace("//", "/");
-  }
-  if (path.length() > 1 && path.endsWith("/")) {
-    path.remove(path.length() - 1);
-  }
+  while (path.indexOf("//") >= 0) path.replace("//", "/");
+  if (path.length() > 1 && path.endsWith("/")) path.remove(path.length() - 1);
   if (path.length() == 0) path = "/";
   return path;
 }
 
-// Превращает относительный путь в абсолютный с учётом cwd
 String resolvePath(const String& path, const String& cwd) {
-  if (path.startsWith("/")) {
-    return normalizePath(path);
-  }
+  if (path.startsWith("/")) return normalizePath(path);
   if (path == ".") return cwd;
   if (path == "..") {
     if (cwd == "/") return "/";
@@ -330,8 +346,6 @@ String resolvePath(const String& path, const String& cwd) {
     if (last <= 0) return "/";
     return cwd.substring(0, last);
   }
-
-  // Обычный относительный
   if (cwd == "/") return normalizePath("/" + path);
   return normalizePath(cwd + "/" + path);
 }
@@ -346,7 +360,7 @@ public:
 
   bool begin() {
     Serial.begin(SERIAL_BAUD);
-    delay(100);
+    delay(200);
 
     if (!_display.begin()) {
       Serial.println("[Kernel] Display init failed!");
@@ -355,7 +369,7 @@ public:
 
     if (!LittleFS.begin(true)) {
       Serial.println("[Kernel] LittleFS mount failed!");
-      _shell.printResponse("FS mount failed");
+      _shell.printResponse("FS mount failed", COLOR_ERROR);
     } else {
       Serial.println("[Kernel] LittleFS mounted as CORE:");
       ensureSystemFolders();
@@ -383,7 +397,7 @@ private:
   DisplayManager _display;
   CommandRegistry _commands;
   Shell _shell;
-  String _cwd;   // текущая директория
+  String _cwd;
 
   void registerBuiltinCommands() {
     _commands.registerCommand("help",   "List commands",           cmd_help);
@@ -402,7 +416,7 @@ private:
     _commands.registerCommand("mkdir",  "Create directory",        cmd_mkdir);
   }
 
-  // -------------------- Commands --------------------
+  // ---------- Commands ----------
 
   static void cmd_help(const String& args) {
     String list;
@@ -421,9 +435,10 @@ private:
   }
 
   static void cmd_info(const String& args) {
-    g_kernel->shell().printResponse(String(OS_NAME) + " " + OS_VERSION);
+    g_kernel->shell().printResponse(String(OS_NAME) + " " + OS_VERSION, COLOR_PROMPT);
     g_kernel->shell().printResponse("Free heap: " + String(ESP.getFreeHeap()));
     g_kernel->shell().printResponse("CPU: " + String(ESP.getCpuFreqMHz()) + " MHz");
+    g_kernel->shell().printResponse("Display: 2.8\" 240x320 TFT");
 
     size_t total = LittleFS.totalBytes();
     size_t used  = LittleFS.usedBytes();
@@ -446,11 +461,11 @@ private:
 
     if (args.equalsIgnoreCase("shell")) {
       g_kernel->display().setMode(DisplayMode::SHELL);
-      g_kernel->shell().printResponse("Switched to SHELL");
+      g_kernel->shell().printResponse("Switched to SHELL", COLOR_OK);
     } else if (args.equalsIgnoreCase("status")) {
       g_kernel->display().setMode(DisplayMode::STATUS);
     } else {
-      g_kernel->shell().printResponse("Unknown mode");
+      g_kernel->shell().printResponse("Unknown mode", COLOR_ERROR);
     }
   }
 
@@ -466,29 +481,22 @@ private:
       target = resolvePath(args, g_kernel->getCwd());
     }
 
-    // Проверяем, что это директория
     File dir = LittleFS.open(target.c_str());
     if (!dir || !dir.isDirectory()) {
-      g_kernel->shell().printResponse("No such directory");
+      g_kernel->shell().printResponse("No such directory", COLOR_ERROR);
       return;
     }
     dir.close();
 
     g_kernel->setCwd(target);
-    // prompt обновится сам при следующем выводе
   }
 
   static void cmd_ls(const String& args) {
-    String path;
-    if (args.length() == 0) {
-      path = g_kernel->getCwd();
-    } else {
-      path = resolvePath(args, g_kernel->getCwd());
-    }
+    String path = (args.length() == 0) ? g_kernel->getCwd() : resolvePath(args, g_kernel->getCwd());
 
     File root = LittleFS.open(path.c_str());
     if (!root || !root.isDirectory()) {
-      g_kernel->shell().printResponse("Not a directory");
+      g_kernel->shell().printResponse("Not a directory", COLOR_ERROR);
       return;
     }
 
@@ -504,7 +512,7 @@ private:
       if (lastSlash >= 0) name = name.substring(lastSlash + 1);
 
       if (file.isDirectory()) {
-        g_kernel->shell().printResponse("[DIR] " + name);
+        g_kernel->shell().printResponse("[DIR] " + name, COLOR_PROMPT);
       } else {
         g_kernel->shell().printResponse(name + " " + String(file.size()) + "b");
       }
@@ -514,15 +522,14 @@ private:
 
   static void cmd_cat(const String& args) {
     if (args.length() == 0) {
-      g_kernel->shell().printResponse("Usage: cat <file>");
+      g_kernel->shell().printResponse("Usage: cat <file>", COLOR_ERROR);
       return;
     }
 
     String path = resolvePath(args, g_kernel->getCwd());
-
     File file = LittleFS.open(path.c_str(), "r");
     if (!file || file.isDirectory()) {
-      g_kernel->shell().printResponse("File not found");
+      g_kernel->shell().printResponse("File not found", COLOR_ERROR);
       return;
     }
 
@@ -539,53 +546,50 @@ private:
   static void cmd_write(const String& args) {
     int space = args.indexOf(' ');
     if (space <= 0) {
-      g_kernel->shell().printResponse("Usage: write <file> <text>");
+      g_kernel->shell().printResponse("Usage: write <file> <text>", COLOR_ERROR);
       return;
     }
 
     String filename = args.substring(0, space);
     String text = args.substring(space + 1);
-
     String path = resolvePath(filename, g_kernel->getCwd());
 
     File file = LittleFS.open(path.c_str(), "w");
     if (!file) {
-      g_kernel->shell().printResponse("Cannot write file");
+      g_kernel->shell().printResponse("Cannot write file", COLOR_ERROR);
       return;
     }
 
     file.println(text);
     file.close();
-    g_kernel->shell().printResponse("OK");
+    g_kernel->shell().printResponse("OK", COLOR_OK);
   }
 
   static void cmd_rm(const String& args) {
     if (args.length() == 0) {
-      g_kernel->shell().printResponse("Usage: rm <file>");
+      g_kernel->shell().printResponse("Usage: rm <file>", COLOR_ERROR);
       return;
     }
 
     String path = resolvePath(args, g_kernel->getCwd());
-
     if (LittleFS.remove(path.c_str())) {
-      g_kernel->shell().printResponse("Deleted");
+      g_kernel->shell().printResponse("Deleted", COLOR_OK);
     } else {
-      g_kernel->shell().printResponse("Failed");
+      g_kernel->shell().printResponse("Failed", COLOR_ERROR);
     }
   }
 
   static void cmd_mkdir(const String& args) {
     if (args.length() == 0) {
-      g_kernel->shell().printResponse("Usage: mkdir <dir>");
+      g_kernel->shell().printResponse("Usage: mkdir <dir>", COLOR_ERROR);
       return;
     }
 
     String path = resolvePath(args, g_kernel->getCwd());
-
     if (LittleFS.mkdir(path.c_str())) {
-      g_kernel->shell().printResponse("Created");
+      g_kernel->shell().printResponse("Created", COLOR_OK);
     } else {
-      g_kernel->shell().printResponse("Failed");
+      g_kernel->shell().printResponse("Failed", COLOR_ERROR);
     }
   }
 };
