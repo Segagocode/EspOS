@@ -1,6 +1,6 @@
 /*
- * EspOS v0.3.3-alpha
- * 2.8" TFT 240x320 + Touch (raw SPI, no extra library)
+ * EspOS v0.3.3-alpha + Touch Debug
+ * 2.8" TFT 240x320 + raw touch debugging
  */
 
 #include <SPI.h>
@@ -28,7 +28,7 @@
 #define SERIAL_BAUD      115200
 
 #define OS_NAME          "EspOS"
-#define OS_VERSION       "0.3.3-alpha"
+#define OS_VERSION       "0.3.3-debug"
 
 #define COL_BG           ILI9341_BLACK
 #define COL_TEXT         ILI9341_WHITE
@@ -40,7 +40,6 @@
 #define COL_KBD_KEY      ILI9341_LIGHTGREY
 #define COL_KBD_TEXT     ILI9341_BLACK
 
-// ====================== OBJECTS ======================
 Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
 
 String lines[MAX_LINES];
@@ -60,25 +59,32 @@ const char* kbdRows[] = {
 };
 int kbdRowLens[] = {10, 10, 9, 7, 1};
 
-// Forward declaration
 void processCommand(String line);
 
 // ====================== RAW TOUCH ======================
 
 uint16_t xptRead(uint8_t command) {
   digitalWrite(TOUCH_CS, LOW);
+  delayMicroseconds(10);
   
   for (int i = 7; i >= 0; i--) {
     digitalWrite(TOUCH_DIN, (command >> i) & 1);
+    delayMicroseconds(5);
     digitalWrite(TOUCH_CLK, HIGH);
+    delayMicroseconds(5);
     digitalWrite(TOUCH_CLK, LOW);
+    delayMicroseconds(5);
   }
+  
+  delayMicroseconds(10);
   
   uint16_t data = 0;
   for (int i = 11; i >= 0; i--) {
     digitalWrite(TOUCH_CLK, HIGH);
+    delayMicroseconds(5);
     if (digitalRead(TOUCH_DO)) data |= (1 << i);
     digitalWrite(TOUCH_CLK, LOW);
+    delayMicroseconds(5);
   }
   
   digitalWrite(TOUCH_CS, HIGH);
@@ -93,12 +99,18 @@ bool getTouch(int &x, int &y) {
   if (!touchPressed()) return false;
 
   uint16_t xRaw = 0, yRaw = 0;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 5; i++) {
     xRaw += xptRead(0xD0);
     yRaw += xptRead(0x90);
   }
-  xRaw /= 4;
-  yRaw /= 4;
+  xRaw /= 5;
+  yRaw /= 5;
+
+  // Debug output
+  Serial.print("IRQ=LOW  Xraw=");
+  Serial.print(xRaw);
+  Serial.print("  Yraw=");
+  Serial.println(yRaw);
 
   x = map(xRaw, 200, 3800, 0, 240);
   y = map(yRaw, 200, 3800, 0, 320);
@@ -107,6 +119,11 @@ bool getTouch(int &x, int &y) {
   if (x > 239) x = 239;
   if (y < 0) y = 0;
   if (y > 319) y = 319;
+
+  Serial.print("Mapped  X=");
+  Serial.print(x);
+  Serial.print("  Y=");
+  Serial.println(y);
 
   return true;
 }
@@ -207,37 +224,36 @@ void toggleKeyboard() {
 // ====================== TOUCH HANDLER ======================
 
 void handleTouch() {
+  static unsigned long lastTouch = 0;
+  if (millis() - lastTouch < 200) return;  // простая защита от дребезга
+
   int x, y;
   if (!getTouch(x, y)) return;
+
+  lastTouch = millis();
 
   if (!kbdVisible) {
     if (y > 280) {
       toggleKeyboard();
-      delay(300);
     }
     return;
   }
 
   int startY = 190;
 
-  // DEL
   if (x > 180 && y > startY + 100 && y < startY + 122) {
     if (inputBuffer.length() > 0) inputBuffer.remove(inputBuffer.length() - 1);
-    delay(250);
     return;
   }
 
-  // ENTER
   if (x < 55 && y > startY + 100 && y < startY + 122) {
     displayPrint("CORE:\\> " + inputBuffer, COL_PROMPT);
     processCommand(inputBuffer);
     inputBuffer = "";
     toggleKeyboard();
-    delay(250);
     return;
   }
 
-  // Клавиши
   for (int r = 0; r < 5; r++) {
     int keyW = (r == 4) ? 120 : 22;
     int startX = (r == 4) ? 60 : 4;
@@ -249,7 +265,6 @@ void handleTouch() {
         if (x >= kx && x <= kx + keyW) {
           if (r == 4) inputBuffer += ' ';
           else inputBuffer += kbdRows[r][c];
-          delay(200);
           return;
         }
       }
@@ -257,7 +272,7 @@ void handleTouch() {
   }
 }
 
-// ====================== FS ======================
+// ====================== FS + COMMANDS (shortened for clarity) ======================
 
 String normalizePath(String path) {
   if (path.length() == 0) return "/";
@@ -285,8 +300,6 @@ void ensureFolders() {
   if (!LittleFS.exists("/logs"))    LittleFS.mkdir("/logs");
 }
 
-// ====================== COMMANDS ======================
-
 void cmd_help() {
   displayPrint("help clear info echo mode kbd", COL_TEXT);
   displayPrint("ls cd pwd cat write rm mkdir", COL_TEXT);
@@ -301,10 +314,7 @@ void cmd_clear() {
 void cmd_info() {
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
   displayPrint("Heap: " + String(ESP.getFreeHeap()), COL_TEXT);
-  displayPrint("Display: 2.8\" + Touch", COL_TEXT);
-  size_t total = LittleFS.totalBytes();
-  size_t used = LittleFS.usedBytes();
-  displayPrint("CORE: " + String(used/1024) + "/" + String(total/1024) + " KB", COL_TEXT);
+  displayPrint("Touch debug mode", COL_TEXT);
 }
 
 void cmd_echo(const String& args) {
@@ -319,14 +329,6 @@ void cmd_mode(const String& args) {
     tft.setTextSize(2);
     tft.setCursor(10, 30);
     tft.println(OS_NAME);
-    tft.setTextSize(1);
-    tft.setTextColor(COL_TEXT);
-    tft.setCursor(10, 70);
-    tft.println("v" + String(OS_VERSION));
-    tft.setCursor(10, 100);
-    tft.println("2.8\" TFT + Touch");
-    tft.setCursor(10, 130);
-    tft.println("Heap: " + String(ESP.getFreeHeap()));
   } else {
     displayClear();
     displayPrompt();
@@ -337,9 +339,7 @@ void cmd_kbd() {
   toggleKeyboard();
 }
 
-void cmd_pwd() {
-  displayPrint(cwd, COL_TEXT);
-}
+void cmd_pwd() { displayPrint(cwd, COL_TEXT); }
 
 void cmd_cd(const String& args) {
   String target = (args.length() == 0 || args == "~") ? "/" : resolvePath(args);
@@ -360,10 +360,7 @@ void cmd_ls(const String& args) {
     return;
   }
   File f = root.openNextFile();
-  if (!f) {
-    displayPrint("(empty)", COL_TEXT);
-    return;
-  }
+  if (!f) { displayPrint("(empty)", COL_TEXT); return; }
   while (f) {
     String name = f.name();
     int slash = name.lastIndexOf('/');
@@ -375,16 +372,9 @@ void cmd_ls(const String& args) {
 }
 
 void cmd_cat(const String& args) {
-  if (args.length() == 0) {
-    displayPrint("Usage: cat <file>", COL_ERROR);
-    return;
-  }
-  String path = resolvePath(args);
-  File f = LittleFS.open(path.c_str(), "r");
-  if (!f || f.isDirectory()) {
-    displayPrint("File not found", COL_ERROR);
-    return;
-  }
+  if (args.length() == 0) { displayPrint("Usage: cat <file>", COL_ERROR); return; }
+  File f = LittleFS.open(resolvePath(args).c_str(), "r");
+  if (!f || f.isDirectory()) { displayPrint("File not found", COL_ERROR); return; }
   while (f.available()) {
     String line = f.readStringUntil('\n');
     line.trim();
@@ -395,37 +385,22 @@ void cmd_cat(const String& args) {
 
 void cmd_write(const String& args) {
   int sp = args.indexOf(' ');
-  if (sp <= 0) {
-    displayPrint("Usage: write <file> <text>", COL_ERROR);
-    return;
-  }
-  String name = args.substring(0, sp);
-  String text = args.substring(sp + 1);
-  String path = resolvePath(name);
-  File f = LittleFS.open(path.c_str(), "w");
-  if (!f) {
-    displayPrint("Cannot write", COL_ERROR);
-    return;
-  }
-  f.println(text);
+  if (sp <= 0) { displayPrint("Usage: write <file> <text>", COL_ERROR); return; }
+  File f = LittleFS.open(resolvePath(args.substring(0, sp)).c_str(), "w");
+  if (!f) { displayPrint("Cannot write", COL_ERROR); return; }
+  f.println(args.substring(sp + 1));
   f.close();
   displayPrint("OK", COL_OK);
 }
 
 void cmd_rm(const String& args) {
-  if (args.length() == 0) {
-    displayPrint("Usage: rm <file>", COL_ERROR);
-    return;
-  }
+  if (args.length() == 0) { displayPrint("Usage: rm <file>", COL_ERROR); return; }
   if (LittleFS.remove(resolvePath(args).c_str())) displayPrint("Deleted", COL_OK);
   else displayPrint("Failed", COL_ERROR);
 }
 
 void cmd_mkdir(const String& args) {
-  if (args.length() == 0) {
-    displayPrint("Usage: mkdir <dir>", COL_ERROR);
-    return;
-  }
+  if (args.length() == 0) { displayPrint("Usage: mkdir <dir>", COL_ERROR); return; }
   if (LittleFS.mkdir(resolvePath(args).c_str())) displayPrint("Created", COL_OK);
   else displayPrint("Failed", COL_ERROR);
 }
@@ -433,26 +408,25 @@ void cmd_mkdir(const String& args) {
 void processCommand(String line) {
   line.trim();
   if (line.length() == 0) return;
-
   int sp = line.indexOf(' ');
   String cmd = (sp < 0) ? line : line.substring(0, sp);
   String args = (sp < 0) ? "" : line.substring(sp + 1);
   args.trim();
   cmd.toLowerCase();
 
-  if (cmd == "help")        cmd_help();
-  else if (cmd == "clear")  cmd_clear();
-  else if (cmd == "info")   cmd_info();
-  else if (cmd == "echo")   cmd_echo(args);
-  else if (cmd == "mode")   cmd_mode(args);
-  else if (cmd == "kbd")    cmd_kbd();
-  else if (cmd == "pwd")    cmd_pwd();
-  else if (cmd == "cd")     cmd_cd(args);
+  if (cmd == "help") cmd_help();
+  else if (cmd == "clear") cmd_clear();
+  else if (cmd == "info") cmd_info();
+  else if (cmd == "echo") cmd_echo(args);
+  else if (cmd == "mode") cmd_mode(args);
+  else if (cmd == "kbd") cmd_kbd();
+  else if (cmd == "pwd") cmd_pwd();
+  else if (cmd == "cd") cmd_cd(args);
   else if (cmd == "ls" || cmd == "dir") cmd_ls(args);
-  else if (cmd == "cat")    cmd_cat(args);
-  else if (cmd == "write")  cmd_write(args);
-  else if (cmd == "rm")     cmd_rm(args);
-  else if (cmd == "mkdir")  cmd_mkdir(args);
+  else if (cmd == "cat") cmd_cat(args);
+  else if (cmd == "write") cmd_write(args);
+  else if (cmd == "rm") cmd_rm(args);
+  else if (cmd == "mkdir") cmd_mkdir(args);
   else displayPrint("Unknown command", COL_ERROR);
 }
 
@@ -460,14 +434,15 @@ void processCommand(String line) {
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
-  delay(300);
+  delay(500);
 
   pinMode(TOUCH_CS, OUTPUT);
   pinMode(TOUCH_CLK, OUTPUT);
   pinMode(TOUCH_DIN, OUTPUT);
   pinMode(TOUCH_DO, INPUT);
-  pinMode(TOUCH_IRQ, INPUT);
+  pinMode(TOUCH_IRQ, INPUT_PULLUP);  // важно
   digitalWrite(TOUCH_CS, HIGH);
+  digitalWrite(TOUCH_CLK, LOW);
 
   tft.begin();
   tft.setRotation(0);
@@ -481,29 +456,35 @@ void setup() {
   }
 
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
-  displayPrint("TFT + Touch ready", COL_OK);
-  displayPrint("Tap bottom or type kbd", COL_TEXT);
+  displayPrint("TOUCH DEBUG MODE", COL_OK);
+  displayPrint("Open Serial Monitor!", COL_TEXT);
   displayPrompt();
 
-  Serial.println("[EspOS] v0.3.3 started");
+  Serial.println();
+  Serial.println("=== EspOS Touch Debug ===");
+  Serial.println("Press the screen and watch values here");
+  Serial.println("IRQ pin should go LOW when pressed");
+  Serial.println();
 }
 
 void loop() {
+  // Постоянно проверяем IRQ для отладки
+  static bool lastIRQ = HIGH;
+  bool irq = digitalRead(TOUCH_IRQ);
+  
+  if (irq != lastIRQ) {
+    Serial.print("IRQ changed to: ");
+    Serial.println(irq == LOW ? "LOW (pressed)" : "HIGH (released)");
+    lastIRQ = irq;
+  }
+
   handleTouch();
 
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '\r') continue;
-
     if (c == '\n') {
-      String shown = "CORE:";
-      if (cwd != "/") {
-        String nice = cwd;
-        nice.replace("/", "\\");
-        shown += nice;
-      }
-      shown += "\\> " + inputBuffer;
-      displayPrint(shown, COL_PROMPT);
+      displayPrint("CORE:\\> " + inputBuffer, COL_PROMPT);
       processCommand(inputBuffer);
       inputBuffer = "";
       displayPrompt();
@@ -511,8 +492,6 @@ void loop() {
     else if (c == 8 || c == 127) {
       if (inputBuffer.length() > 0) inputBuffer.remove(inputBuffer.length() - 1);
     }
-    else {
-      if (inputBuffer.length() < 60) inputBuffer += c;
-    }
+    else if (inputBuffer.length() < 60) inputBuffer += c;
   }
 }
