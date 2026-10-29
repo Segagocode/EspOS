@@ -1,11 +1,12 @@
 /*
- * EspOS v0.3.4-alpha
- * Stable touch + on-screen keyboard
+ * EspOS v0.3.5-alpha
+ * 2.8" TFT + XPT2046_Touchscreen (Paul Stoffregen)
  */
 
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
+#include <XPT2046_Touchscreen.h>
 #include <FS.h>
 #include <LittleFS.h>
 
@@ -15,9 +16,6 @@
 #define TFT_RST    4
 
 #define TOUCH_CS   33
-#define TOUCH_CLK  25
-#define TOUCH_DIN  32
-#define TOUCH_DO   35
 #define TOUCH_IRQ  34
 
 // ====================== CONFIG ======================
@@ -28,7 +26,7 @@
 #define SERIAL_BAUD      115200
 
 #define OS_NAME          "EspOS"
-#define OS_VERSION       "0.3.4-alpha"
+#define OS_VERSION       "0.3.5-alpha"
 
 #define COL_BG           ILI9341_BLACK
 #define COL_TEXT         ILI9341_WHITE
@@ -40,7 +38,9 @@
 #define COL_KBD_KEY      ILI9341_LIGHTGREY
 #define COL_KBD_TEXT     ILI9341_BLACK
 
+// ====================== OBJECTS ======================
 Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
+XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 
 String lines[MAX_LINES];
 uint16_t lineColors[MAX_LINES];
@@ -60,78 +60,6 @@ const char* kbdRows[] = {
 int kbdRowLens[] = {10, 10, 9, 7, 1};
 
 void processCommand(String line);
-
-// ====================== TOUCH (stable) ======================
-
-uint16_t xptRead(uint8_t command) {
-  digitalWrite(TOUCH_CS, LOW);
-  delayMicroseconds(10);
-
-  for (int i = 7; i >= 0; i--) {
-    digitalWrite(TOUCH_DIN, (command >> i) & 1);
-    delayMicroseconds(3);
-    digitalWrite(TOUCH_CLK, HIGH);
-    delayMicroseconds(3);
-    digitalWrite(TOUCH_CLK, LOW);
-    delayMicroseconds(3);
-  }
-
-  delayMicroseconds(10);
-
-  uint16_t data = 0;
-  for (int i = 11; i >= 0; i--) {
-    digitalWrite(TOUCH_CLK, HIGH);
-    delayMicroseconds(3);
-    if (digitalRead(TOUCH_DO)) data |= (1 << i);
-    digitalWrite(TOUCH_CLK, LOW);
-    delayMicroseconds(3);
-  }
-
-  digitalWrite(TOUCH_CS, HIGH);
-  return data;
-}
-
-bool getStableTouch(int &x, int &y) {
-  // Требуем, чтобы IRQ был LOW достаточно долго
-  if (digitalRead(TOUCH_IRQ) == HIGH) return false;
-
-  delay(15);  // ждём стабилизации
-  if (digitalRead(TOUCH_IRQ) == HIGH) return false;
-
-  // Несколько измерений + медиана
-  uint16_t xs[7], ys[7];
-  for (int i = 0; i < 7; i++) {
-    xs[i] = xptRead(0xD0);
-    ys[i] = xptRead(0x90);
-    delayMicroseconds(50);
-  }
-
-  // Простая сортировка для медианы
-  for (int i = 0; i < 6; i++) {
-    for (int j = i + 1; j < 7; j++) {
-      if (xs[j] < xs[i]) { uint16_t t = xs[i]; xs[i] = xs[j]; xs[j] = t; }
-      if (ys[j] < ys[i]) { uint16_t t = ys[i]; ys[i] = ys[j]; ys[j] = t; }
-    }
-  }
-
-  uint16_t xRaw = xs[3];  // медиана
-  uint16_t yRaw = ys[3];
-
-  // Фильтр совсем мусорных значений
-  if (xRaw < 100 || xRaw > 4000 || yRaw < 100 || yRaw > 4000) return false;
-
-  // Калибровка (подстроено под твои реальные значения)
-  // Из логов: Xraw ~1500-2100, Yraw ~850-2000
-  x = map(xRaw, 1400, 2200, 0, 240);
-  y = map(yRaw, 800, 2100, 0, 320);
-
-  if (x < 0) x = 0;
-  if (x > 239) x = 239;
-  if (y < 0) y = 0;
-  if (y > 319) y = 319;
-
-  return true;
-}
 
 // ====================== DISPLAY ======================
 
@@ -226,22 +154,37 @@ void toggleKeyboard() {
   if (!kbdVisible) displayPrompt();
 }
 
-// ====================== TOUCH HANDLER ======================
+// ====================== TOUCH ======================
 
 void handleTouch() {
-  static unsigned long lastAccept = 0;
-  if (millis() - lastAccept < 280) return;  // сильный антидребезг
+  static unsigned long lastTouch = 0;
+  if (millis() - lastTouch < 250) return;
 
-  int x, y;
-  if (!getStableTouch(x, y)) return;
+  if (!ts.touched()) return;
 
-  lastAccept = millis();
+  TS_Point p = ts.getPoint();
 
-  // Покажем в Serial только успешные нажатия
-  Serial.print("Touch OK  X=");
+  // Сырые значения с библиотеки
+  // Обычно XPT2046 даёт ~200-3800
+  int x = map(p.x, 200, 3800, 0, 240);
+  int y = map(p.y, 200, 3800, 0, 320);
+
+  // Защита от выхода за границы
+  if (x < 0) x = 0;
+  if (x > 239) x = 239;
+  if (y < 0) y = 0;
+  if (y > 319) y = 319;
+
+  lastTouch = millis();
+
+  Serial.print("Touch X=");
   Serial.print(x);
   Serial.print(" Y=");
-  Serial.println(y);
+  Serial.print(y);
+  Serial.print(" rawX=");
+  Serial.print(p.x);
+  Serial.print(" rawY=");
+  Serial.println(p.y);
 
   if (!kbdVisible) {
     if (y > 270) {
@@ -253,13 +196,15 @@ void handleTouch() {
   int startY = 190;
 
   // DEL
-  if (x > 175 && y > startY + 95) {
-    if (inputBuffer.length() > 0) inputBuffer.remove(inputBuffer.length() - 1);
+  if (x > 170 && y > startY + 95) {
+    if (inputBuffer.length() > 0) {
+      inputBuffer.remove(inputBuffer.length() - 1);
+    }
     return;
   }
 
   // ENTER
-  if (x < 60 && y > startY + 95) {
+  if (x < 65 && y > startY + 95) {
     displayPrint("CORE:\\> " + inputBuffer, COL_PROMPT);
     processCommand(inputBuffer);
     inputBuffer = "";
@@ -273,10 +218,10 @@ void handleTouch() {
     int startX = (r == 4) ? 60 : 4;
     int ky = startY + 4 + r * 24;
 
-    if (y >= ky - 2 && y <= ky + 22) {
+    if (y >= ky - 3 && y <= ky + 23) {
       for (int c = 0; c < kbdRowLens[r]; c++) {
         int kx = startX + c * (keyW + 2);
-        if (x >= kx - 2 && x <= kx + keyW + 2) {
+        if (x >= kx - 3 && x <= kx + keyW + 3) {
           if (r == 4) inputBuffer += ' ';
           else inputBuffer += kbdRows[r][c];
           return;
@@ -286,7 +231,7 @@ void handleTouch() {
   }
 }
 
-// ====================== FS + COMMANDS ======================
+// ====================== FS ======================
 
 String normalizePath(String path) {
   if (path.length() == 0) return "/";
@@ -314,6 +259,8 @@ void ensureFolders() {
   if (!LittleFS.exists("/logs"))    LittleFS.mkdir("/logs");
 }
 
+// ====================== COMMANDS ======================
+
 void cmd_help() {
   displayPrint("help clear info echo mode kbd", COL_TEXT);
   displayPrint("ls cd pwd cat write rm mkdir", COL_TEXT);
@@ -328,7 +275,7 @@ void cmd_clear() {
 void cmd_info() {
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
   displayPrint("Heap: " + String(ESP.getFreeHeap()), COL_TEXT);
-  displayPrint("Touch: stable mode", COL_TEXT);
+  displayPrint("Touch: XPT2046 lib", COL_TEXT);
 }
 
 void cmd_echo(const String& args) {
@@ -450,18 +397,13 @@ void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(400);
 
-  pinMode(TOUCH_CS, OUTPUT);
-  pinMode(TOUCH_CLK, OUTPUT);
-  pinMode(TOUCH_DIN, OUTPUT);
-  pinMode(TOUCH_DO, INPUT);
-  pinMode(TOUCH_IRQ, INPUT_PULLUP);
-  digitalWrite(TOUCH_CS, HIGH);
-  digitalWrite(TOUCH_CLK, LOW);
-
   tft.begin();
   tft.setRotation(0);
   tft.fillScreen(COL_BG);
   tft.setTextSize(1);
+
+  ts.begin();
+  ts.setRotation(0);   // Можно потом поменять на 1/2/3 если оси перевёрнуты
 
   if (!LittleFS.begin(true)) {
     displayPrint("LittleFS failed", COL_ERROR);
@@ -470,11 +412,11 @@ void setup() {
   }
 
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
-  displayPrint("Stable touch mode", COL_OK);
+  displayPrint("XPT2046 library", COL_OK);
   displayPrint("Tap bottom or type kbd", COL_TEXT);
   displayPrompt();
 
-  Serial.println("[EspOS] v0.3.4 stable touch");
+  Serial.println("[EspOS] v0.3.5 XPT2046 lib");
 }
 
 void loop() {
