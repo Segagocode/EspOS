@@ -1,6 +1,6 @@
 /*
- * EspOS v0.3.3-alpha + Touch Debug
- * 2.8" TFT 240x320 + raw touch debugging
+ * EspOS v0.3.4-alpha
+ * Stable touch + on-screen keyboard
  */
 
 #include <SPI.h>
@@ -28,7 +28,7 @@
 #define SERIAL_BAUD      115200
 
 #define OS_NAME          "EspOS"
-#define OS_VERSION       "0.3.3-debug"
+#define OS_VERSION       "0.3.4-alpha"
 
 #define COL_BG           ILI9341_BLACK
 #define COL_TEXT         ILI9341_WHITE
@@ -61,69 +61,74 @@ int kbdRowLens[] = {10, 10, 9, 7, 1};
 
 void processCommand(String line);
 
-// ====================== RAW TOUCH ======================
+// ====================== TOUCH (stable) ======================
 
 uint16_t xptRead(uint8_t command) {
   digitalWrite(TOUCH_CS, LOW);
   delayMicroseconds(10);
-  
+
   for (int i = 7; i >= 0; i--) {
     digitalWrite(TOUCH_DIN, (command >> i) & 1);
-    delayMicroseconds(5);
+    delayMicroseconds(3);
     digitalWrite(TOUCH_CLK, HIGH);
-    delayMicroseconds(5);
+    delayMicroseconds(3);
     digitalWrite(TOUCH_CLK, LOW);
-    delayMicroseconds(5);
+    delayMicroseconds(3);
   }
-  
+
   delayMicroseconds(10);
-  
+
   uint16_t data = 0;
   for (int i = 11; i >= 0; i--) {
     digitalWrite(TOUCH_CLK, HIGH);
-    delayMicroseconds(5);
+    delayMicroseconds(3);
     if (digitalRead(TOUCH_DO)) data |= (1 << i);
     digitalWrite(TOUCH_CLK, LOW);
-    delayMicroseconds(5);
+    delayMicroseconds(3);
   }
-  
+
   digitalWrite(TOUCH_CS, HIGH);
   return data;
 }
 
-bool touchPressed() {
-  return digitalRead(TOUCH_IRQ) == LOW;
-}
+bool getStableTouch(int &x, int &y) {
+  // Требуем, чтобы IRQ был LOW достаточно долго
+  if (digitalRead(TOUCH_IRQ) == HIGH) return false;
 
-bool getTouch(int &x, int &y) {
-  if (!touchPressed()) return false;
+  delay(15);  // ждём стабилизации
+  if (digitalRead(TOUCH_IRQ) == HIGH) return false;
 
-  uint16_t xRaw = 0, yRaw = 0;
-  for (int i = 0; i < 5; i++) {
-    xRaw += xptRead(0xD0);
-    yRaw += xptRead(0x90);
+  // Несколько измерений + медиана
+  uint16_t xs[7], ys[7];
+  for (int i = 0; i < 7; i++) {
+    xs[i] = xptRead(0xD0);
+    ys[i] = xptRead(0x90);
+    delayMicroseconds(50);
   }
-  xRaw /= 5;
-  yRaw /= 5;
 
-  // Debug output
-  Serial.print("IRQ=LOW  Xraw=");
-  Serial.print(xRaw);
-  Serial.print("  Yraw=");
-  Serial.println(yRaw);
+  // Простая сортировка для медианы
+  for (int i = 0; i < 6; i++) {
+    for (int j = i + 1; j < 7; j++) {
+      if (xs[j] < xs[i]) { uint16_t t = xs[i]; xs[i] = xs[j]; xs[j] = t; }
+      if (ys[j] < ys[i]) { uint16_t t = ys[i]; ys[i] = ys[j]; ys[j] = t; }
+    }
+  }
 
-  x = map(xRaw, 200, 3800, 0, 240);
-  y = map(yRaw, 200, 3800, 0, 320);
+  uint16_t xRaw = xs[3];  // медиана
+  uint16_t yRaw = ys[3];
+
+  // Фильтр совсем мусорных значений
+  if (xRaw < 100 || xRaw > 4000 || yRaw < 100 || yRaw > 4000) return false;
+
+  // Калибровка (подстроено под твои реальные значения)
+  // Из логов: Xraw ~1500-2100, Yraw ~850-2000
+  x = map(xRaw, 1400, 2200, 0, 240);
+  y = map(yRaw, 800, 2100, 0, 320);
 
   if (x < 0) x = 0;
   if (x > 239) x = 239;
   if (y < 0) y = 0;
   if (y > 319) y = 319;
-
-  Serial.print("Mapped  X=");
-  Serial.print(x);
-  Serial.print("  Y=");
-  Serial.println(y);
 
   return true;
 }
@@ -224,16 +229,22 @@ void toggleKeyboard() {
 // ====================== TOUCH HANDLER ======================
 
 void handleTouch() {
-  static unsigned long lastTouch = 0;
-  if (millis() - lastTouch < 200) return;  // простая защита от дребезга
+  static unsigned long lastAccept = 0;
+  if (millis() - lastAccept < 280) return;  // сильный антидребезг
 
   int x, y;
-  if (!getTouch(x, y)) return;
+  if (!getStableTouch(x, y)) return;
 
-  lastTouch = millis();
+  lastAccept = millis();
+
+  // Покажем в Serial только успешные нажатия
+  Serial.print("Touch OK  X=");
+  Serial.print(x);
+  Serial.print(" Y=");
+  Serial.println(y);
 
   if (!kbdVisible) {
-    if (y > 280) {
+    if (y > 270) {
       toggleKeyboard();
     }
     return;
@@ -241,12 +252,14 @@ void handleTouch() {
 
   int startY = 190;
 
-  if (x > 180 && y > startY + 100 && y < startY + 122) {
+  // DEL
+  if (x > 175 && y > startY + 95) {
     if (inputBuffer.length() > 0) inputBuffer.remove(inputBuffer.length() - 1);
     return;
   }
 
-  if (x < 55 && y > startY + 100 && y < startY + 122) {
+  // ENTER
+  if (x < 60 && y > startY + 95) {
     displayPrint("CORE:\\> " + inputBuffer, COL_PROMPT);
     processCommand(inputBuffer);
     inputBuffer = "";
@@ -254,15 +267,16 @@ void handleTouch() {
     return;
   }
 
+  // Клавиши
   for (int r = 0; r < 5; r++) {
     int keyW = (r == 4) ? 120 : 22;
     int startX = (r == 4) ? 60 : 4;
     int ky = startY + 4 + r * 24;
 
-    if (y >= ky && y <= ky + 20) {
+    if (y >= ky - 2 && y <= ky + 22) {
       for (int c = 0; c < kbdRowLens[r]; c++) {
         int kx = startX + c * (keyW + 2);
-        if (x >= kx && x <= kx + keyW) {
+        if (x >= kx - 2 && x <= kx + keyW + 2) {
           if (r == 4) inputBuffer += ' ';
           else inputBuffer += kbdRows[r][c];
           return;
@@ -272,7 +286,7 @@ void handleTouch() {
   }
 }
 
-// ====================== FS + COMMANDS (shortened for clarity) ======================
+// ====================== FS + COMMANDS ======================
 
 String normalizePath(String path) {
   if (path.length() == 0) return "/";
@@ -314,7 +328,7 @@ void cmd_clear() {
 void cmd_info() {
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
   displayPrint("Heap: " + String(ESP.getFreeHeap()), COL_TEXT);
-  displayPrint("Touch debug mode", COL_TEXT);
+  displayPrint("Touch: stable mode", COL_TEXT);
 }
 
 void cmd_echo(const String& args) {
@@ -434,13 +448,13 @@ void processCommand(String line) {
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
-  delay(500);
+  delay(400);
 
   pinMode(TOUCH_CS, OUTPUT);
   pinMode(TOUCH_CLK, OUTPUT);
   pinMode(TOUCH_DIN, OUTPUT);
   pinMode(TOUCH_DO, INPUT);
-  pinMode(TOUCH_IRQ, INPUT_PULLUP);  // важно
+  pinMode(TOUCH_IRQ, INPUT_PULLUP);
   digitalWrite(TOUCH_CS, HIGH);
   digitalWrite(TOUCH_CLK, LOW);
 
@@ -456,28 +470,14 @@ void setup() {
   }
 
   displayPrint(String(OS_NAME) + " " + OS_VERSION, COL_PROMPT);
-  displayPrint("TOUCH DEBUG MODE", COL_OK);
-  displayPrint("Open Serial Monitor!", COL_TEXT);
+  displayPrint("Stable touch mode", COL_OK);
+  displayPrint("Tap bottom or type kbd", COL_TEXT);
   displayPrompt();
 
-  Serial.println();
-  Serial.println("=== EspOS Touch Debug ===");
-  Serial.println("Press the screen and watch values here");
-  Serial.println("IRQ pin should go LOW when pressed");
-  Serial.println();
+  Serial.println("[EspOS] v0.3.4 stable touch");
 }
 
 void loop() {
-  // Постоянно проверяем IRQ для отладки
-  static bool lastIRQ = HIGH;
-  bool irq = digitalRead(TOUCH_IRQ);
-  
-  if (irq != lastIRQ) {
-    Serial.print("IRQ changed to: ");
-    Serial.println(irq == LOW ? "LOW (pressed)" : "HIGH (released)");
-    lastIRQ = irq;
-  }
-
   handleTouch();
 
   while (Serial.available()) {
