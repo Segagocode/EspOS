@@ -60,19 +60,20 @@ const char* kbdRows[] = {
 };
 int kbdRowLens[] = {10, 10, 9, 7, 1};
 
+// Forward declaration
+void processCommand(String line);
+
 // ====================== RAW TOUCH ======================
 
-uint16_t touchRead(uint8_t command) {
+uint16_t xptRead(uint8_t command) {
   digitalWrite(TOUCH_CS, LOW);
   
-  // Отправляем команду
   for (int i = 7; i >= 0; i--) {
     digitalWrite(TOUCH_DIN, (command >> i) & 1);
     digitalWrite(TOUCH_CLK, HIGH);
     digitalWrite(TOUCH_CLK, LOW);
   }
   
-  // Читаем 12 бит данных
   uint16_t data = 0;
   for (int i = 11; i >= 0; i--) {
     digitalWrite(TOUCH_CLK, HIGH);
@@ -91,16 +92,14 @@ bool touchPressed() {
 bool getTouch(int &x, int &y) {
   if (!touchPressed()) return false;
 
-  // Несколько измерений для стабильности
   uint16_t xRaw = 0, yRaw = 0;
   for (int i = 0; i < 4; i++) {
-    xRaw += touchRead(0xD0); // X
-    yRaw += touchRead(0x90); // Y
+    xRaw += xptRead(0xD0);
+    yRaw += xptRead(0x90);
   }
   xRaw /= 4;
   yRaw /= 4;
 
-  // Примерная калибровка (можно потом подстроить)
   x = map(xRaw, 200, 3800, 0, 240);
   y = map(yRaw, 200, 3800, 0, 320);
 
@@ -288,8 +287,6 @@ void ensureFolders() {
 
 // ====================== COMMANDS ======================
 
-void processCommand(String line);
-
 void cmd_help() {
   displayPrint("help clear info echo mode kbd", COL_TEXT);
   displayPrint("ls cd pwd cat write rm mkdir", COL_TEXT);
@@ -465,7 +462,6 @@ void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(300);
 
-  // Touch pins
   pinMode(TOUCH_CS, OUTPUT);
   pinMode(TOUCH_CLK, OUTPUT);
   pinMode(TOUCH_DIN, OUTPUT);
