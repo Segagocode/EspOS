@@ -1,74 +1,62 @@
 # EspOS Roadmap
 
-## Текущая версия
+## Current version
 
-**v0.3.1-alpha**
+**v0.4.0-alpha**
 
-- 2.8" TFT 240×320 (ILI9341)
-- Рабочий цветной Shell
-- LittleFS как `CORE:`
-- Команды: ls, cd, pwd, cat, write, rm, mkdir, help, info, mode...
-
----
-
-## Главный принцип дизайна EspOS
-
-> **Терминал — основа.**  
-> **Графика — дополнение, а не замена.**
-
-Мы сознательно сохраняем мощный текстовый Shell как главный способ управления системой.  
-Графические экраны и элементы добавляются постепенно и только там, где они реально дают удобство, не убивая производительность ESP32.
+### Highlights
+- Visible input line (no more blind typing)
+- Keyboard with `.` `/` `-`
+- Fixed terminal scrolling
+- Proper `resolvePath` with `..` support
+- Command table dispatcher
+- WiFi connect + save config
+- OTA update command with progress bar
 
 ---
 
-## Stage 1 — Foundation ✅
+## Design principle
 
-- [x] Kernel + Shell + Command system
-- [x] ArduinoDroid single-file support
-
----
-
-## Stage 2 — Storage ✅ (почти)
-
-- [x] LittleFS as `CORE:`
-- [x] Current directory + path handling
-- [ ] SD Card support (`SD:`) ← следующий большой шаг
+> Terminal is the core.  
+> Graphics is a complement, not a replacement.
 
 ---
 
-## Stage 3 — Display & Basic UI  ← сейчас
+## Stage status
 
-- [x] Переход на 2.8" TFT 240×320
-- [x] Цветной текстовый Shell
-- [ ] SD-карта через слот на дисплее
-- [ ] Улучшенный Status-экран
-- [ ] Простой графический файловый менеджер (список)
+### Stage 1 — Foundation ✅
+- Kernel/Shell/Commands
+- ArduinoDroid single-file workflow
 
----
+### Stage 2 — Storage ✅
+- LittleFS as `CORE:`
+- Path handling, cd/pwd/ls/cat/write...
 
-## Stage 4 — Extensibility
+### Stage 3 — Display & Input ✅
+- 2.8" ILI9341
+- On-screen keyboard
+- Touch integration
 
-- [ ] Buttons + Touch
-- [ ] Plugin system
-- [ ] Связь с Arduino-платами
+### Stage 4 — Connectivity & Autonomy  ← now
+- [x] WiFi command + saved config
+- [x] OTA update command
+- [ ] Better touch calibration UI
+- [ ] Auto-update channel / version check
 
----
-
-## Stage 5 — Runtime (CraftOS-inspired)
-
-- [ ] Lua interpreter
-- [ ] Возможность запуска скриптов с CORE:/SD:
-- [ ] Простая система программ
-
----
-
-## Future
-
-- Русский язык
-- Более сложная графика (осторожно)
-- WiFi tools
-- Mesh
+### Stage 5 — Runtime
+- Lua / scripting
+- App-like launch from files
 
 ---
 
-*Last updated: 2026-10-29*
+## New commands in v0.4.0
+
+```
+wifi                  # status
+wifi <ssid> <pass>    # connect + save
+update <url>          # OTA flash .bin from URL
+```
+
+---
+
+*Updated: 2026-10-30*
