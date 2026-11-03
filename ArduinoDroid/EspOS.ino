@@ -368,18 +368,25 @@ bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t
   return true;
 }
 
-bool TouchManager::isTouched() {
-  return (digitalRead(TOUCH_IRQ) == LOW);
-}
-
 bool TouchManager::getRawPoint(TS_Point& p) {
-  // Hardware IRQ: pin goes LOW only upon real physical contact
-  if (digitalRead(TOUCH_IRQ) == HIGH) {
+  uint16_t z1 = 0, z2 = 0, rx = 0, ry = 0;
+  probeSPI(z1, z2, rx, ry);
+
+  // A genuine physical touch requires electrical contact between top and bottom sheets.
+  // In idle state, Z2 is strictly 0 and Z1 <= 15.
+  // In pressed state, Z1 >= 25 AND Z2 >= 8.
+  if (z1 < 25 || z2 < 8) {
     return false;
   }
 
   p = _ts.getPoint();
+  p.z = (int16_t)z1;
   return true;
+}
+
+bool TouchManager::isTouched() {
+  TS_Point p;
+  return getRawPoint(p);
 }
 
 bool TouchManager::getCoordinates(int& x, int& y) {
