@@ -284,6 +284,16 @@ static void cmd_touch(const String& args) {
     return;
   }
 
+  if (sub == "irq") {
+    Serial.println("Reading TOUCH_IRQ pin 27 (press any key to stop):");
+    while (!Serial.available()) {
+      Serial.printf("IRQ pin %d: %d\n", TOUCH_IRQ, digitalRead(TOUCH_IRQ));
+      delay(150);
+    }
+    while (Serial.available()) Serial.read();
+    return;
+  }
+
   if (sub == "raw") {
     g_shell->display().print("Streaming raw SPI to Serial...", COL_WARN);
     g_shell->display().print("Send character in Serial to stop", COL_TEXT);

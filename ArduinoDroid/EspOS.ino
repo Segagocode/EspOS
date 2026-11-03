@@ -372,12 +372,11 @@ bool TouchManager::getRawPoint(TS_Point& p) {
   uint16_t z1 = 0, z2 = 0, rx = 0, ry = 0;
   probeSPI(z1, z2, rx, ry);
 
-  // A genuine physical touch requires electrical contact between top and bottom sheets.
-  // In idle state, Z2 is strictly 0 and Z1 <= 15.
-  // In pressed state, Z1 >= 25 AND Z2 >= 8.
   if (z1 < 25 || z2 < 8) {
     return false;
   }
+
+  Serial.printf("[DEBUG HIT] z1=%u z2=%u irq=%d\n", z1, z2, digitalRead(TOUCH_IRQ));
 
   p = _ts.getPoint();
   p.z = (int16_t)z1;
@@ -415,10 +414,18 @@ TouchAction TouchManager::update(DisplayManager& display, String& inputBuffer, S
   if (millis() - _lastTouchTime < 180) return TouchAction::NONE;
 
   int x = 0, y = 0;
-  if (!getCoordinates(x, y)) return TouchAction::NONE;
+  TS_Point p;
+  if (!getRawPoint(p)) return TouchAction::NONE;
   _lastTouchTime = millis();
 
-  Serial.printf("[Touch] Tap at X=%d, Y=%d (kbd=%s)\n", x, y, display.isKeyboardVisible() ? "ON" : "OFF");
+  x = map(p.x, _calMaxX, _calMinX, 0, 240);
+  y = map(p.y, _calMinY, _calMaxY, 0, 320);
+  if (x < 0) x = 0;
+  if (x > 239) x = 239;
+  if (y < 0) y = 0;
+  if (y > 319) y = 319;
+
+  Serial.printf("[Touch] Tap at X=%d, Y=%d (rawX=%d, rawY=%d, z=%d)\n", x, y, p.x, p.y, p.z);
 
   // If keyboard is hidden, tap anywhere in bottom area to open it
   if (!display.isKeyboardVisible()) {
@@ -1429,6 +1436,16 @@ static void cmd_touch(const String& args) {
       }
     }
     g_shell->display().print("Usage: touch cal <minX> <maxX> <minY> <maxY>", COL_ERROR);
+    return;
+  }
+
+  if (sub == "irq") {
+    Serial.println("Reading TOUCH_IRQ pin 27 (press any key to stop):");
+    while (!Serial.available()) {
+      Serial.printf("IRQ pin %d: %d\n", TOUCH_IRQ, digitalRead(TOUCH_IRQ));
+      delay(150);
+    }
+    while (Serial.available()) Serial.read();
     return;
   }
 
