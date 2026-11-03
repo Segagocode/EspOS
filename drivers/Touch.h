@@ -40,6 +40,8 @@ public:
   int getCalMaxY() const { return _calMaxY; }
 
 private:
+  uint16_t readADC(uint8_t cmd);
+
   SPIClass _touchSPI;
   XPT2046_Touchscreen _ts;
   unsigned long _lastTouchTime = 0;

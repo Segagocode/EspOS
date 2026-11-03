@@ -21,48 +21,90 @@ void TouchManager::setRotation(uint8_t rot) {
   _ts.setRotation(_rotation);
 }
 
+uint16_t TouchManager::readADC(uint8_t cmd) {
+  _touchSPI.transfer(cmd);
+  uint8_t h = _touchSPI.transfer(0x00);
+  uint8_t l = _touchSPI.transfer(0x00);
+  return ((uint16_t)(h & 0x7F) << 5) | (l >> 3);
+}
+
 bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t& rawY) {
   _touchSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
   digitalWrite(TOUCH_CS, LOW);
 
-  _touchSPI.transfer(0xB1);
-  z1 = _touchSPI.transfer16(0xC1) >> 3;
-  z2 = _touchSPI.transfer16(0x91) >> 3;
-  rawX = _touchSPI.transfer16(0xD1) >> 3;
-  rawY = _touchSPI.transfer16(0xD0) >> 3;
-  _touchSPI.transfer16(0);
+  z1 = readADC(0xB1);
+  z2 = readADC(0xC1);
+  rawX = readADC(0xD1);
+  rawY = readADC(0x91);
+
+  _touchSPI.transfer(0xD0);
+  _touchSPI.transfer(0x00);
+  _touchSPI.transfer(0x00);
 
   digitalWrite(TOUCH_CS, HIGH);
   _touchSPI.endTransaction();
   return true;
 }
 
+static inline uint16_t median3(uint16_t a, uint16_t b, uint16_t c) {
+  if ((a <= b && b <= c) || (c <= b && b <= a)) return b;
+  if ((b <= a && a <= c) || (c <= a && a <= b)) return a;
+  return c;
+}
+
 bool TouchManager::getRawPoint(TS_Point& p) {
-  uint16_t z1 = 0, z2 = 0, rx = 0, ry = 0;
-  probeSPI(z1, z2, rx, ry);
+  _touchSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TOUCH_CS, LOW);
 
-  // Filter 1: First sample must exceed idle capacitive noise floor (idle peak ~76/60)
-  if (z1 < 90 || z2 < 45) {
+  // 1. Measure Z1 and Z2 using byte-by-byte protocol
+  uint16_t z1 = readADC(0xB1);
+  uint16_t z2 = readADC(0xC1);
+
+  // Pressure Z = z1 + 4095 - z2
+  int32_t z = (int32_t)z1 + 4095 - (int32_t)z2;
+  if (z < 0) z = 0;
+
+  // Pressure threshold: untouched panel has z1 ~ 0, z2 ~ 4095 -> z ~ 0.
+  // Physical touch (even light) produces z > 200..4000.
+  if (z < 200) {
+    // Power down ADC and enable PENIRQ
+    _touchSPI.transfer(0xD0);
+    _touchSPI.transfer(0x00);
+    _touchSPI.transfer(0x00);
+    digitalWrite(TOUCH_CS, HIGH);
+    _touchSPI.endTransaction();
     return false;
   }
 
-  // Filter 2: Second sample 4ms later eliminates transient EMI / backlight spikes
-  delay(4);
-  uint16_t z1_b = 0, z2_b = 0, rx_b = 0, ry_b = 0;
-  probeSPI(z1_b, z2_b, rx_b, ry_b);
-  if (z1_b < 80 || z2_b < 40) {
-    return false;
+  // 2. Read X and Y (3 samples for median filtering to eliminate jitter)
+  uint16_t xs[3];
+  uint16_t ys[3];
+  for (int i = 0; i < 3; i++) {
+    xs[i] = readADC(0xD1); // X
+    ys[i] = readADC(0x91); // Y
   }
 
-  p = _ts.getPoint();
-  p.z = (int16_t)z1_b;
+  // Power down ADC and enable PENIRQ
+  _touchSPI.transfer(0xD0);
+  _touchSPI.transfer(0x00);
+  _touchSPI.transfer(0x00);
+
+  digitalWrite(TOUCH_CS, HIGH);
+  _touchSPI.endTransaction();
+
+  uint16_t rx = median3(xs[0], xs[1], xs[2]);
+  uint16_t ry = median3(ys[0], ys[1], ys[2]);
 
   // Coordinate validity bounds check
-  if (p.x < 150 || p.x > 3950 || p.y < 150 || p.y > 3950) {
+  if (rx < 100 || rx > 4000 || ry < 100 || ry > 4000) {
     return false;
   }
 
-  Serial.printf("[DEBUG HIT] z1=%u z2=%u rawX=%d rawY=%d irq=%d\n", z1_b, z2_b, p.x, p.y, digitalRead(TOUCH_IRQ));
+  p.x = rx;
+  p.y = ry;
+  p.z = (int16_t)z;
+
+  Serial.printf("[DEBUG HIT] z1=%u z2=%u z=%d rawX=%u rawY=%u\n", z1, z2, (int)z, rx, ry);
   return true;
 }
 
