@@ -41,14 +41,28 @@ bool TouchManager::getRawPoint(TS_Point& p) {
   uint16_t z1 = 0, z2 = 0, rx = 0, ry = 0;
   probeSPI(z1, z2, rx, ry);
 
-  if (z1 < 25 || z2 < 8) {
+  // Filter 1: First sample must exceed idle capacitive noise floor (idle peak ~76/60)
+  if (z1 < 90 || z2 < 45) {
     return false;
   }
 
-  Serial.printf("[DEBUG HIT] z1=%u z2=%u irq=%d\n", z1, z2, digitalRead(TOUCH_IRQ));
+  // Filter 2: Second sample 4ms later eliminates transient EMI / backlight spikes
+  delay(4);
+  uint16_t z1_b = 0, z2_b = 0, rx_b = 0, ry_b = 0;
+  probeSPI(z1_b, z2_b, rx_b, ry_b);
+  if (z1_b < 80 || z2_b < 40) {
+    return false;
+  }
 
   p = _ts.getPoint();
-  p.z = (int16_t)z1;
+  p.z = (int16_t)z1_b;
+
+  // Coordinate validity bounds check
+  if (p.x < 150 || p.x > 3950 || p.y < 150 || p.y > 3950) {
+    return false;
+  }
+
+  Serial.printf("[DEBUG HIT] z1=%u z2=%u rawX=%d rawY=%d irq=%d\n", z1_b, z2_b, p.x, p.y, digitalRead(TOUCH_IRQ));
   return true;
 }
 
