@@ -393,9 +393,21 @@ bool TouchManager::getRawPoint(TS_Point& p) {
   uint16_t z1 = readADC(0xB1);
   uint16_t z2 = readADC(0xC1);
 
-  // Untouched panel has z1 <= 8 and z2 == 0.
-  // Physical touch produces z1 >= 22 and z2 >= 6.
-  if (z1 < 22 || z2 < 6) {
+  // Filter 1: First sample must exceed idle noise floor (idle is z1 ~ 25..45, z2 ~ 8..25)
+  if (z1 < 58 || z2 < 35) {
+    _touchSPI.transfer(0xD0);
+    _touchSPI.transfer(0x00);
+    _touchSPI.transfer(0x00);
+    digitalWrite(TOUCH_CS, HIGH);
+    _touchSPI.endTransaction();
+    return false;
+  }
+
+  // Filter 2: Second sample 3ms later to eliminate transient capacitive / backlight spikes
+  delay(3);
+  uint16_t z1_b = readADC(0xB1);
+  uint16_t z2_b = readADC(0xC1);
+  if (z1_b < 50 || z2_b < 28) {
     _touchSPI.transfer(0xD0);
     _touchSPI.transfer(0x00);
     _touchSPI.transfer(0x00);
@@ -430,9 +442,9 @@ bool TouchManager::getRawPoint(TS_Point& p) {
 
   p.x = rx;
   p.y = ry;
-  p.z = z1;
+  p.z = z1_b;
 
-  Serial.printf("[DEBUG HIT] z1=%u z2=%u rawX=%u rawY=%u\n", z1, z2, rx, ry);
+  Serial.printf("[DEBUG HIT] z1=%u z2=%u rawX=%u rawY=%u\n", z1_b, z2_b, rx, ry);
   return true;
 }
 
