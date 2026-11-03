@@ -295,6 +295,7 @@ public:
   bool begin();
   bool isTouched();
   bool getCoordinates(int& x, int& y);
+  bool getRawPoint(TS_Point& p);
 
   TouchAction update(DisplayManager& display, String& inputBuffer, String& submittedCmd, const String& cwd);
 
@@ -340,6 +341,12 @@ bool TouchManager::getCoordinates(int& x, int& y) {
   if (x > 239) x = 239;
   if (y < 0) y = 0;
   if (y > 319) y = 319;
+  return true;
+}
+
+bool TouchManager::getRawPoint(TS_Point& p) {
+  if (!_ts.touched()) return false;
+  p = _ts.getPoint();
   return true;
 }
 
@@ -1277,29 +1284,73 @@ static void cmd_pktmon(const String& args) {
   WirelessTools::packetMonitor(ch, g_shell->display(), g_shell->touch());
 }
 
+static void cmd_touchtest(const String& args) {
+  g_shell->display().setKeyboardVisible(false);
+  Adafruit_ILI9341& tft = g_shell->display().raw();
+  tft.fillScreen(COL_BG);
+  tft.setTextColor(COL_PROMPT);
+  tft.setTextSize(1);
+  tft.setCursor(6, 6);
+  tft.print("TOUCH TEST (Draw on screen)");
+  tft.setCursor(6, 20);
+  tft.setTextColor(COL_WARN);
+  tft.print("Tap [EXIT] button to exit");
+
+  tft.fillRoundRect(175, 4, 60, 24, 4, COL_ERROR);
+  tft.setTextColor(COL_TEXT);
+  tft.setCursor(190, 12);
+  tft.print("EXIT");
+
+  while (true) {
+    if (Serial.available()) {
+      while (Serial.available()) Serial.read();
+      break;
+    }
+    if (g_shell->touch().isTouched()) {
+      int x = 0, y = 0;
+      TS_Point raw;
+      if (g_shell->touch().getCoordinates(x, y) && g_shell->touch().getRawPoint(raw)) {
+        if (x >= 165 && y <= 35) {
+          break;
+        }
+        tft.fillRect(6, 32, 228, 16, COL_BG);
+        tft.setCursor(6, 34);
+        tft.setTextColor(COL_OK);
+        tft.print("X:" + String(x) + " Y:" + String(y) + " (" + String(raw.x) + "," + String(raw.y) + ")");
+        tft.fillCircle(x, y, 2, COL_PROMPT);
+      }
+      delay(30);
+    }
+    delay(10);
+  }
+
+  g_shell->display().clear();
+}
+
 // ====================== Command Table ======================
 
 static const CommandEntry cmdTable[] = {
-  {"help",    cmd_help,    "List available commands"},
-  {"clear",   cmd_clear,   "Clear the screen"},
-  {"info",    cmd_info,    "System information"},
-  {"echo",    cmd_echo,    "Print text"},
-  {"mode",    cmd_mode,    "Switch display mode (shell/status)"},
-  {"kbd",     cmd_kbd,     "Toggle on-screen keyboard"},
-  {"pwd",     cmd_pwd,     "Print working directory"},
-  {"cd",      cmd_cd,      "Change directory"},
-  {"ls",      cmd_ls,      "List directory contents"},
-  {"dir",     cmd_ls,      "Alias for ls"},
-  {"cat",     cmd_cat,     "View file contents"},
-  {"write",   cmd_write,   "Write text to file"},
-  {"rm",      cmd_rm,      "Remove file"},
-  {"mkdir",   cmd_mkdir,   "Create directory"},
-  {"wifi",    cmd_wifi,    "WiFi status / connect"},
-  {"update",  cmd_update,  "OTA firmware update from URL"},
-  {"reboot",  cmd_reboot,  "Restart ESP32"},
-  {"scan",    cmd_scan,    "Scan 2.4GHz WiFi networks"},
-  {"beacon",  cmd_beacon,  "Beacon spam (fake APs)"},
-  {"pktmon",  cmd_pktmon,  "Packet traffic monitor (promiscuous mode)"}
+  {"help",      cmd_help,      "List available commands"},
+  {"clear",     cmd_clear,     "Clear the screen"},
+  {"info",      cmd_info,      "System information"},
+  {"echo",      cmd_echo,      "Print text"},
+  {"mode",      cmd_mode,      "Switch display mode (shell/status)"},
+  {"kbd",       cmd_kbd,       "Toggle on-screen keyboard"},
+  {"pwd",       cmd_pwd,       "Print working directory"},
+  {"cd",        cmd_cd,        "Change directory"},
+  {"ls",        cmd_ls,        "List directory contents"},
+  {"dir",       cmd_ls,        "Alias for ls"},
+  {"cat",       cmd_cat,       "View file contents"},
+  {"write",     cmd_write,     "Write text to file"},
+  {"rm",        cmd_rm,        "Remove file"},
+  {"mkdir",     cmd_mkdir,     "Create directory"},
+  {"wifi",      cmd_wifi,      "WiFi status / connect"},
+  {"update",    cmd_update,    "OTA firmware update from URL"},
+  {"reboot",    cmd_reboot,    "Restart ESP32"},
+  {"scan",      cmd_scan,      "Scan 2.4GHz WiFi networks"},
+  {"beacon",    cmd_beacon,    "Beacon spam (fake APs)"},
+  {"pktmon",    cmd_pktmon,    "Packet traffic monitor (promiscuous mode)"},
+  {"touchtest", cmd_touchtest, "Interactive touch drawing & coordinate test"}
 };
 
 static const int cmdTableSize = sizeof(cmdTable) / sizeof(cmdTable[0]);

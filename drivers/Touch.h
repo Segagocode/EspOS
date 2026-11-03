@@ -23,6 +23,7 @@ public:
   bool begin();
   bool isTouched();
   bool getCoordinates(int& x, int& y);
+  bool getRawPoint(TS_Point& p);
 
   TouchAction update(DisplayManager& display, String& inputBuffer, String& submittedCmd, const String& cwd);
 

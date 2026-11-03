@@ -26,6 +26,12 @@ bool TouchManager::getCoordinates(int& x, int& y) {
   return true;
 }
 
+bool TouchManager::getRawPoint(TS_Point& p) {
+  if (!_ts.touched()) return false;
+  p = _ts.getPoint();
+  return true;
+}
+
 void TouchManager::setCalibration(int minX, int maxX, int minY, int maxY) {
   _calMinX = minX;
   _calMaxX = maxX;
