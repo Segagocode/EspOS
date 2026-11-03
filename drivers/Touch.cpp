@@ -19,18 +19,39 @@ void TouchManager::setRotation(uint8_t rot) {
   _ts.setRotation(_rotation);
 }
 
-bool TouchManager::isTouched() {
-  TS_Point p;
-  return getRawPoint(p);
+bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t& rawY) {
+  _touchSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TOUCH_CS, LOW);
+
+  _touchSPI.transfer(0xB1);
+  z1 = _touchSPI.transfer16(0xC1) >> 3;
+  z2 = _touchSPI.transfer16(0x91) >> 3;
+  rawX = _touchSPI.transfer16(0xD1) >> 3;
+  rawY = _touchSPI.transfer16(0xD0) >> 3;
+  _touchSPI.transfer16(0);
+
+  digitalWrite(TOUCH_CS, HIGH);
+  _touchSPI.endTransaction();
+  return true;
 }
 
 bool TouchManager::getRawPoint(TS_Point& p) {
+  uint16_t z1 = 0, z2 = 0, rx = 0, ry = 0;
+  probeSPI(z1, z2, rx, ry);
+
+  // When not touched, Z1 is 0..10. When physically touched, Z1 jumps to 18+.
+  if (z1 < 18) {
+    return false;
+  }
+
   p = _ts.getPoint();
-  // Filter out disconnected or floating MISO bus:
-  // All zeros on SPI produces z=4095, x=4095, y=0.
-  if (p.z < 200 || p.z >= 4090) return false;
-  if ((p.x == 0 || p.x >= 4090) && (p.y == 0 || p.y >= 4090)) return false;
+  p.z = (int16_t)z1;
   return true;
+}
+
+bool TouchManager::isTouched() {
+  TS_Point p;
+  return getRawPoint(p);
 }
 
 bool TouchManager::getCoordinates(int& x, int& y) {
@@ -52,22 +73,6 @@ void TouchManager::setCalibration(int minX, int maxX, int minY, int maxY) {
   _calMaxX = maxX;
   _calMinY = minY;
   _calMaxY = maxY;
-}
-
-bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t& rawY) {
-  _touchSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
-  digitalWrite(TOUCH_CS, LOW);
-
-  _touchSPI.transfer(0xB1);
-  z1 = _touchSPI.transfer16(0xC1) >> 3;
-  z2 = _touchSPI.transfer16(0x91) >> 3;
-  rawX = _touchSPI.transfer16(0xD1) >> 3;
-  rawY = _touchSPI.transfer16(0xD0) >> 3;
-  _touchSPI.transfer16(0);
-
-  digitalWrite(TOUCH_CS, HIGH);
-  _touchSPI.endTransaction();
-  return true;
 }
 
 TouchAction TouchManager::update(DisplayManager& display, String& inputBuffer, String& submittedCmd, const String& cwd) {
