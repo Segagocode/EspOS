@@ -388,7 +388,7 @@ bool TouchManager::getRawPoint(TS_Point& p) {
   // Wake up ADC & measure Z1
   readADC(0xB1);
   uint16_t z1 = readADC(0xB1);
-  if (z1 < 20) {
+  if (z1 < 150) {
     return false;
   }
 
