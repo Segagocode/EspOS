@@ -316,7 +316,6 @@ private:
   uint16_t readADC(uint8_t cmd);
 
   SPIClass _touchSPI;
-  XPT2046_Touchscreen _ts;
   unsigned long _lastTouchTime = 0;
   uint8_t _rotation = 0;
 
@@ -334,7 +333,7 @@ private:
 #include "Touch.h"
 
 TouchManager::TouchManager()
-  : _touchSPI(HSPI), _ts(TOUCH_CS) {
+  : _touchSPI(HSPI) {
 }
 
 bool TouchManager::begin() {
@@ -344,37 +343,30 @@ bool TouchManager::begin() {
   pinMode(TOUCH_IRQ, INPUT_PULLUP);
 
   _touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
-  _ts.begin(_touchSPI);
-  _ts.setRotation(_rotation);
   return true;
 }
 
 void TouchManager::setRotation(uint8_t rot) {
   _rotation = rot % 4;
-  _ts.setRotation(_rotation);
 }
 
 uint16_t TouchManager::readADC(uint8_t cmd) {
+  _touchSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TOUCH_CS, LOW);
   _touchSPI.transfer(cmd);
   uint8_t h = _touchSPI.transfer(0x00);
   uint8_t l = _touchSPI.transfer(0x00);
+  digitalWrite(TOUCH_CS, HIGH);
+  _touchSPI.endTransaction();
   return ((uint16_t)(h & 0x7F) << 5) | (l >> 3);
 }
 
 bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t& rawY) {
-  _touchSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-  digitalWrite(TOUCH_CS, LOW);
-
-  // Wake up ADC with dummy read
   readADC(0xB1);
-
   z1 = readADC(0xB1);
   z2 = readADC(0xC1);
-  rawX = readADC(0xD1);
-  rawY = readADC(0x91);
-
-  digitalWrite(TOUCH_CS, HIGH);
-  _touchSPI.endTransaction();
+  rawX = readADC(0x91);
+  rawY = readADC(0xD1);
   return true;
 }
 
@@ -385,66 +377,26 @@ static inline uint16_t median3(uint16_t a, uint16_t b, uint16_t c) {
 }
 
 bool TouchManager::getRawPoint(TS_Point& p) {
-  _touchSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-  digitalWrite(TOUCH_CS, LOW);
-
-  // 1. Wake up ADC from power down
+  // Wake up ADC & measure Z1
   readADC(0xB1);
-
-  // 2. Sample 1
   uint16_t z1 = readADC(0xB1);
+  if (z1 < 50) {
+    return false;
+  }
+
   uint16_t z2 = readADC(0xC1);
-  uint16_t rx1 = readADC(0xD1);
-  uint16_t ry1 = readADC(0x91);
+  uint16_t rx = readADC(0x91);
+  uint16_t ry = readADC(0xD1);
 
-  // Base threshold: reject idle noise floor
-  if (z1 < 55 || z2 < 20) {
-    digitalWrite(TOUCH_CS, HIGH);
-    _touchSPI.endTransaction();
-    return false;
-  }
-
-  // Reject ghost resting point unless pressed firmly
-  if (rx1 >= 3180 && rx1 <= 3320 && ry1 >= 2460 && ry1 <= 2560) {
-    if (z1 < 85) {
-      digitalWrite(TOUCH_CS, HIGH);
-      _touchSPI.endTransaction();
-      return false;
-    }
-  }
-
-  // 3. Sample 2 (debounce 2ms later)
-  delay(2);
-  uint16_t z1_b = readADC(0xB1);
-  uint16_t z2_b = readADC(0xC1);
-  uint16_t rx2 = readADC(0xD1);
-  uint16_t ry2 = readADC(0x91);
-
-  digitalWrite(TOUCH_CS, HIGH);
-  _touchSPI.endTransaction();
-
-  if (z1_b < 48 || z2_b < 15) {
-    return false;
-  }
-
-  // Coordinate stability check
-  if (abs((int)rx1 - (int)rx2) > 120 || abs((int)ry1 - (int)ry2) > 120) {
-    return false;
-  }
-
-  uint16_t rx = (rx1 + rx2) / 2;
-  uint16_t ry = (ry1 + ry2) / 2;
-
-  // Coordinate validity bounds check
   if (rx < 100 || rx > 4000 || ry < 100 || ry > 4000) {
     return false;
   }
 
   p.x = rx;
   p.y = ry;
-  p.z = z1_b;
+  p.z = z1;
 
-  Serial.printf("[DEBUG HIT] z1=%u z2=%u rawX=%u rawY=%u\n", z1_b, z2_b, rx, ry);
+  Serial.printf("[DEBUG HIT] z1=%u z2=%u rawX=%u rawY=%u\n", z1, z2, rx, ry);
   return true;
 }
 
