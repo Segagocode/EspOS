@@ -10,6 +10,7 @@ static void cmd_help(const String& args) {
   g_shell->display().print("Storage: ls, cd, pwd, cat, write, rm, mkdir", COL_TEXT);
   g_shell->display().print("Network: wifi, update", COL_TEXT);
   g_shell->display().print("Hacker:  scan, beacon, pktmon", COL_PROMPT);
+  g_shell->display().print("Touch:   touch, touchtest", COL_OK);
 }
 
 static void cmd_clear(const String& args) {
@@ -198,40 +199,121 @@ static void cmd_touchtest(const String& args) {
   tft.setTextColor(COL_PROMPT);
   tft.setTextSize(1);
   tft.setCursor(6, 6);
-  tft.print("TOUCH TEST (Draw on screen)");
+  tft.print("TOUCH TEST & CALIBRATION");
   tft.setCursor(6, 20);
   tft.setTextColor(COL_WARN);
-  tft.print("Tap [EXIT] button to exit");
+  tft.print("Draw on screen. Tap [EXIT] to exit");
 
   tft.fillRoundRect(175, 4, 60, 24, 4, COL_ERROR);
   tft.setTextColor(COL_TEXT);
   tft.setCursor(190, 12);
   tft.print("EXIT");
 
+  Serial.println("=== TOUCH TEST STARTED ===");
+  Serial.println("Touch anywhere on screen to see coordinates. Send any character to exit.");
+
   while (true) {
     if (Serial.available()) {
       while (Serial.available()) Serial.read();
       break;
     }
-    if (g_shell->touch().isTouched()) {
-      int x = 0, y = 0;
-      TS_Point raw;
-      if (g_shell->touch().getCoordinates(x, y) && g_shell->touch().getRawPoint(raw)) {
-        if (x >= 165 && y <= 35) {
-          break;
-        }
-        tft.fillRect(6, 32, 228, 16, COL_BG);
-        tft.setCursor(6, 34);
-        tft.setTextColor(COL_OK);
-        tft.print("X:" + String(x) + " Y:" + String(y) + " (" + String(raw.x) + "," + String(raw.y) + ")");
-        tft.fillCircle(x, y, 2, COL_PROMPT);
+
+    TS_Point raw;
+    int x = 0, y = 0;
+    if (g_shell->touch().getRawPoint(raw)) {
+      g_shell->touch().getCoordinates(x, y);
+
+      // Check EXIT button
+      if (x >= 170 && y <= 35) {
+        break;
       }
+
+      tft.fillRect(6, 32, 228, 16, COL_BG);
+      tft.setCursor(6, 34);
+      tft.setTextColor(COL_OK);
+      tft.print("X:" + String(x) + " Y:" + String(y) + " (" + String(raw.x) + "," + String(raw.y) + ",z=" + String(raw.z) + ")");
+      tft.fillCircle(x, y, 2, COL_PROMPT);
+
+      Serial.printf("[TOUCH] X=%d Y=%d (raw: %d, %d, z=%d)\n", x, y, raw.x, raw.y, raw.z);
       delay(30);
     }
     delay(10);
   }
 
+  Serial.println("=== TOUCH TEST ENDED ===");
   g_shell->display().clear();
+}
+
+static void cmd_touch(const String& args) {
+  int sp = args.indexOf(' ');
+  String sub = (sp < 0) ? args : args.substring(0, sp);
+  String subArgs = (sp < 0) ? "" : args.substring(sp + 1);
+  sub.toLowerCase();
+
+  if (sub == "rot") {
+    int r = subArgs.toInt();
+    g_shell->touch().setRotation(r);
+    g_shell->display().print("Touch rotation set to " + String(r % 4), COL_OK);
+    Serial.println("[Touch] Rotation set to " + String(r % 4));
+    return;
+  }
+
+  if (sub == "info") {
+    g_shell->display().print("Touch Rot: " + String(g_shell->touch().getRotation()), COL_TEXT);
+    g_shell->display().print("Cal X: " + String(g_shell->touch().getCalMinX()) + ".." + String(g_shell->touch().getCalMaxX()), COL_TEXT);
+    g_shell->display().print("Cal Y: " + String(g_shell->touch().getCalMinY()) + ".." + String(g_shell->touch().getCalMaxY()), COL_TEXT);
+    return;
+  }
+
+  if (sub == "cal") {
+    int p1 = subArgs.indexOf(' ');
+    if (p1 > 0) {
+      int p2 = subArgs.indexOf(' ', p1 + 1);
+      int p3 = (p2 > 0) ? subArgs.indexOf(' ', p2 + 1) : -1;
+      if (p1 > 0 && p2 > 0 && p3 > 0) {
+        int x1 = subArgs.substring(0, p1).toInt();
+        int x2 = subArgs.substring(p1 + 1, p2).toInt();
+        int y1 = subArgs.substring(p2 + 1, p3).toInt();
+        int y2 = subArgs.substring(p3 + 1).toInt();
+        g_shell->touch().setCalibration(x1, x2, y1, y2);
+        g_shell->display().print("Calibrated: X(" + String(x1) + ".." + String(x2) + ") Y(" + String(y1) + ".." + String(y2) + ")", COL_OK);
+        return;
+      }
+    }
+    g_shell->display().print("Usage: touch cal <minX> <maxX> <minY> <maxY>", COL_ERROR);
+    return;
+  }
+
+  if (sub == "raw") {
+    g_shell->display().print("Streaming raw SPI to Serial...", COL_WARN);
+    g_shell->display().print("Send character in Serial to stop", COL_TEXT);
+    Serial.println("=== XPT2046 RAW SPI DIAGNOSTIC STREAM ===");
+    Serial.println("Format: Z1, Z2, Pressure(Z), rawX, rawY | lib: x, y, z");
+    while (!Serial.available()) {
+      uint16_t z1 = 0, z2 = 0, rx = 0, ry = 0;
+      g_shell->touch().probeSPI(z1, z2, rx, ry);
+      int pz = (int)z1 + 4095 - (int)z2;
+      TS_Point p;
+      bool ok = g_shell->touch().getRawPoint(p);
+
+      if (pz > 150 || ok || rx > 50 || ry > 50) {
+        Serial.printf("[SPI HIT] Z1=%u Z2=%u P=%d rx=%u ry=%u | lib: x=%d y=%d z=%d\n",
+                      z1, z2, pz, rx, ry, p.x, p.y, p.z);
+      }
+      delay(40);
+    }
+    while (Serial.available()) Serial.read();
+    g_shell->display().print("Stopped", COL_OK);
+    Serial.println("=== DIAGNOSTIC STREAM STOPPED ===");
+    return;
+  }
+
+  if (sub == "test" || sub.length() == 0) {
+    cmd_touchtest("");
+    return;
+  }
+
+  g_shell->display().print("Usage: touch [test|raw|rot <0..3>|cal|info]", COL_DIR);
 }
 
 // ====================== Command Table ======================
@@ -257,6 +339,7 @@ static const CommandEntry cmdTable[] = {
   {"scan",      cmd_scan,      "Scan 2.4GHz WiFi networks"},
   {"beacon",    cmd_beacon,    "Beacon spam (fake APs)"},
   {"pktmon",    cmd_pktmon,    "Packet traffic monitor (promiscuous mode)"},
+  {"touch",     cmd_touch,     "Touchscreen diagnostics & calibration"},
   {"touchtest", cmd_touchtest, "Interactive touch drawing & coordinate test"}
 };
 
