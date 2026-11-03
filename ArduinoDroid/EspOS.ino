@@ -362,17 +362,16 @@ uint16_t TouchManager::readADC(uint8_t cmd) {
 }
 
 bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t& rawY) {
-  _touchSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  _touchSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
   digitalWrite(TOUCH_CS, LOW);
+
+  // Wake up ADC with dummy read
+  readADC(0xB1);
 
   z1 = readADC(0xB1);
   z2 = readADC(0xC1);
   rawX = readADC(0xD1);
   rawY = readADC(0x91);
-
-  _touchSPI.transfer(0xD0);
-  _touchSPI.transfer(0x00);
-  _touchSPI.transfer(0x00);
 
   digitalWrite(TOUCH_CS, HIGH);
   _touchSPI.endTransaction();
@@ -386,18 +385,18 @@ static inline uint16_t median3(uint16_t a, uint16_t b, uint16_t c) {
 }
 
 bool TouchManager::getRawPoint(TS_Point& p) {
-  _touchSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  _touchSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
   digitalWrite(TOUCH_CS, LOW);
 
-  // 1. Measure Z1 and Z2
+  // 1. Wake up ADC from power down
+  readADC(0xB1);
+
+  // 2. Measure Z1 and Z2
   uint16_t z1 = readADC(0xB1);
   uint16_t z2 = readADC(0xC1);
 
-  // Filter 1: First sample must exceed idle noise floor (idle is z1 ~ 25..45, z2 ~ 8..25)
-  if (z1 < 58 || z2 < 35) {
-    _touchSPI.transfer(0xD0);
-    _touchSPI.transfer(0x00);
-    _touchSPI.transfer(0x00);
+  // Filter 1: First sample must exceed idle noise floor
+  if (z1 < 40 || z2 < 15) {
     digitalWrite(TOUCH_CS, HIGH);
     _touchSPI.endTransaction();
     return false;
@@ -407,27 +406,19 @@ bool TouchManager::getRawPoint(TS_Point& p) {
   delay(3);
   uint16_t z1_b = readADC(0xB1);
   uint16_t z2_b = readADC(0xC1);
-  if (z1_b < 50 || z2_b < 28) {
-    _touchSPI.transfer(0xD0);
-    _touchSPI.transfer(0x00);
-    _touchSPI.transfer(0x00);
+  if (z1_b < 30 || z2_b < 10) {
     digitalWrite(TOUCH_CS, HIGH);
     _touchSPI.endTransaction();
     return false;
   }
 
-  // 2. Read X and Y (3 samples for median filtering to eliminate jitter)
+  // 3. Read X and Y (3 samples for median filtering to eliminate jitter)
   uint16_t xs[3];
   uint16_t ys[3];
   for (int i = 0; i < 3; i++) {
     xs[i] = readADC(0xD1); // X
     ys[i] = readADC(0x91); // Y
   }
-
-  // Power down ADC and enable PENIRQ
-  _touchSPI.transfer(0xD0);
-  _touchSPI.transfer(0x00);
-  _touchSPI.transfer(0x00);
 
   digitalWrite(TOUCH_CS, HIGH);
   _touchSPI.endTransaction();
@@ -1526,9 +1517,9 @@ static void cmd_touch(const String& args) {
       TS_Point p;
       bool ok = g_shell->touch().getRawPoint(p);
 
-      if (pz > 150 || ok || rx > 50 || ry > 50) {
-        Serial.printf("[SPI HIT] Z1=%u Z2=%u P=%d rx=%u ry=%u | lib: x=%d y=%d z=%d\n",
-                      z1, z2, pz, rx, ry, p.x, p.y, p.z);
+      if (z1 >= 15 || z2 >= 5 || ok) {
+        Serial.printf("[SPI HIT] Z1=%u Z2=%u rx=%u ry=%u | lib: x=%d y=%d z=%d\n",
+                      z1, z2, rx, ry, p.x, p.y, p.z);
       }
       delay(40);
     }
