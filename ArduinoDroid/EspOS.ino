@@ -314,6 +314,7 @@ public:
 
 private:
   uint16_t readADC(uint8_t cmd);
+  uint16_t readChannel(uint8_t cmd);
 
   SPIClass _touchSPI;
   unsigned long _lastTouchTime = 0;
@@ -361,6 +362,19 @@ uint16_t TouchManager::readADC(uint8_t cmd) {
   return ((uint16_t)(h & 0x7F) << 5) | (l >> 3);
 }
 
+static inline uint16_t median3(uint16_t a, uint16_t b, uint16_t c) {
+  if ((a <= b && b <= c) || (c <= b && b <= a)) return b;
+  if ((b <= a && a <= c) || (c <= a && a <= b)) return a;
+  return c;
+}
+
+uint16_t TouchManager::readChannel(uint8_t cmd) {
+  uint16_t s1 = readADC(cmd);
+  uint16_t s2 = readADC(cmd);
+  uint16_t s3 = readADC(cmd);
+  return median3(s1, s2, s3);
+}
+
 bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t& rawY) {
   readADC(0xB1);
   z1 = readADC(0xB1);
@@ -370,25 +384,19 @@ bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t
   return true;
 }
 
-static inline uint16_t median3(uint16_t a, uint16_t b, uint16_t c) {
-  if ((a <= b && b <= c) || (c <= b && b <= a)) return b;
-  if ((b <= a && a <= c) || (c <= a && a <= b)) return a;
-  return c;
-}
-
 bool TouchManager::getRawPoint(TS_Point& p) {
   // Wake up ADC & measure Z1
   readADC(0xB1);
   uint16_t z1 = readADC(0xB1);
-  if (z1 < 50) {
+  if (z1 < 20) {
     return false;
   }
 
   uint16_t z2 = readADC(0xC1);
-  uint16_t rx = readADC(0x91);
-  uint16_t ry = readADC(0xD1);
+  uint16_t rx = readChannel(0x91);
+  uint16_t ry = readChannel(0xD1);
 
-  if (rx < 100 || rx > 4000 || ry < 100 || ry > 4000) {
+  if (rx < 10 || rx > 4080 || ry < 10 || ry > 4080) {
     return false;
   }
 
@@ -1478,7 +1486,7 @@ static void cmd_touch(const String& args) {
       TS_Point p;
       bool ok = g_shell->touch().getRawPoint(p);
 
-      if (z1 >= 15 || z2 >= 5 || ok) {
+      if (z1 >= 15 || ok) {
         Serial.printf("[SPI HIT] Z1=%u Z2=%u rx=%u ry=%u | lib: x=%d y=%d z=%d\n",
                       z1, z2, rx, ry, p.x, p.y, p.z);
       }

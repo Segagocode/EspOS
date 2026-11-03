@@ -306,7 +306,7 @@ static void cmd_touch(const String& args) {
       TS_Point p;
       bool ok = g_shell->touch().getRawPoint(p);
 
-      if (z1 >= 15 || z2 >= 5 || ok) {
+      if (z1 >= 15 || ok) {
         Serial.printf("[SPI HIT] Z1=%u Z2=%u rx=%u ry=%u | lib: x=%d y=%d z=%d\n",
                       z1, z2, rx, ry, p.x, p.y, p.z);
       }

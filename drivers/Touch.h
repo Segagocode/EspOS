@@ -41,6 +41,7 @@ public:
 
 private:
   uint16_t readADC(uint8_t cmd);
+  uint16_t readChannel(uint8_t cmd);
 
   SPIClass _touchSPI;
   unsigned long _lastTouchTime = 0;

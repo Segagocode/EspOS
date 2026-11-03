@@ -29,6 +29,19 @@ uint16_t TouchManager::readADC(uint8_t cmd) {
   return ((uint16_t)(h & 0x7F) << 5) | (l >> 3);
 }
 
+static inline uint16_t median3(uint16_t a, uint16_t b, uint16_t c) {
+  if ((a <= b && b <= c) || (c <= b && b <= a)) return b;
+  if ((b <= a && a <= c) || (c <= a && a <= b)) return a;
+  return c;
+}
+
+uint16_t TouchManager::readChannel(uint8_t cmd) {
+  uint16_t s1 = readADC(cmd);
+  uint16_t s2 = readADC(cmd);
+  uint16_t s3 = readADC(cmd);
+  return median3(s1, s2, s3);
+}
+
 bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t& rawY) {
   readADC(0xB1);
   z1 = readADC(0xB1);
@@ -38,25 +51,19 @@ bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t
   return true;
 }
 
-static inline uint16_t median3(uint16_t a, uint16_t b, uint16_t c) {
-  if ((a <= b && b <= c) || (c <= b && b <= a)) return b;
-  if ((b <= a && a <= c) || (c <= a && a <= b)) return a;
-  return c;
-}
-
 bool TouchManager::getRawPoint(TS_Point& p) {
   // Wake up ADC & measure Z1
   readADC(0xB1);
   uint16_t z1 = readADC(0xB1);
-  if (z1 < 50) {
+  if (z1 < 20) {
     return false;
   }
 
   uint16_t z2 = readADC(0xC1);
-  uint16_t rx = readADC(0x91);
-  uint16_t ry = readADC(0xD1);
+  uint16_t rx = readChannel(0x91);
+  uint16_t ry = readChannel(0xD1);
 
-  if (rx < 100 || rx > 4000 || ry < 100 || ry > 4000) {
+  if (rx < 10 || rx > 4080 || ry < 10 || ry > 4080) {
     return false;
   }
 
