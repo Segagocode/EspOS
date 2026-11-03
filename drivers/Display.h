@@ -2,15 +2,15 @@
 #define ESPOS_DISPLAY_H
 
 #include <Arduino.h>
+#include <SPI.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <Adafruit_ILI9341.h>
 #include "../config/Config.h"
 
 enum class DisplayMode {
   SHELL,
   STATUS,
-  // MONITOR,   // будущий режим
-  // SETTINGS
+  RAW_GRAPHICS
 };
 
 class DisplayManager {
@@ -19,26 +19,35 @@ public:
 
   bool begin();
   void clear();
-  void setMode(DisplayMode mode);
-  DisplayMode getMode() const;
+  void print(const String& text, uint16_t color = COL_TEXT);
+  void prompt(const String& cwd);
+  void drawInputLine(const String& inputBuffer);
+  void drawKeyboard();
+  void toggleKeyboard(const String& inputBuffer, const String& cwd);
+  void redrawAll(const String& inputBuffer);
 
-  // Работа со строками (для Shell)
-  void printLine(const String& text);
-  void clearLines();
-  void redraw();
+  bool isKeyboardVisible() const { return _kbdVisible; }
+  void setKeyboardVisible(bool visible) { _kbdVisible = visible; }
 
-  // Прямой доступ к дисплею (если нужно)
-  Adafruit_SSD1306& raw();
+  DisplayMode getMode() const { return _mode; }
+  void setMode(DisplayMode mode) { _mode = mode; }
+
+  Adafruit_ILI9341& raw() { return _tft; }
+
+  // Keyboard layout constants
+  static const char* kbdRows[5];
+  static const int kbdRowLens[5];
 
 private:
-  Adafruit_SSD1306 _display;
+  Adafruit_ILI9341 _tft;
   DisplayMode _mode = DisplayMode::SHELL;
+  bool _kbdVisible = false;
 
   String _lines[MAX_LINES];
+  uint16_t _lineColors[MAX_LINES];
   int _lineCount = 0;
 
-  void drawShell();
-  void drawStatus();
+  void redrawTextArea();
 };
 
 #endif // ESPOS_DISPLAY_H

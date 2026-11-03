@@ -1,9 +1,6 @@
 /*
  * EspOS - Minimal modular OS for ESP32
- * Stage 1: Kernel + Display + Command System + Shell
- *
- * Основной файл для удобной компиляции в ArduinoDroid / Arduino IDE.
- * Вся логика вынесена в модули.
+ * v0.5.0-marauder: Modular Architecture + Marauder Wireless Tools
  */
 
 #include "config/Config.h"

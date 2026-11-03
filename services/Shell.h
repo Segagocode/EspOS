@@ -3,26 +3,50 @@
 
 #include <Arduino.h>
 #include "../drivers/Display.h"
-#include "CommandRegistry.h"
+#include "../drivers/Touch.h"
+#include "Storage.h"
+#include "NetManager.h"
+#include "WirelessTools.h"
+
+typedef void (*CmdFunc)(const String& args);
+
+struct CommandEntry {
+  const char* name;
+  CmdFunc handler;
+  const char* desc;
+};
 
 class Shell {
 public:
-  Shell(DisplayManager& display, CommandRegistry& registry);
+  Shell(DisplayManager& display, TouchManager& touch, StorageManager& storage, EspNetManager& network);
 
   void begin();
-  void update();               // Вызывать в loop()
+  void update();
+  void execute(String line);
+
+  String getCwd() const { return _cwd; }
+  void setCwd(const String& path) { _cwd = path; }
+
+  DisplayManager& display() { return _display; }
+  TouchManager& touch() { return _touch; }
+  StorageManager& storage() { return _storage; }
+  EspNetManager& network() { return _network; }
+
   void printPrompt();
-  void printResponse(const String& text);
 
 private:
   DisplayManager& _display;
-  CommandRegistry& _registry;
+  TouchManager& _touch;
+  StorageManager& _storage;
+  EspNetManager& _network;
 
-  String _currentLine;
-  bool _promptShown = false;
+  String _cwd = "/";
+  String _inputBuffer = "";
 
-  void processLine(const String& line);
-  void handleUnknown(const String& cmd);
+  void handleSerialInput();
+  void handleTouchInput();
 };
+
+extern Shell* g_shell;
 
 #endif // ESPOS_SHELL_H
