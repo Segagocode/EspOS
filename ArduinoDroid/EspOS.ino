@@ -1486,11 +1486,9 @@ static void cmd_touch(const String& args) {
       TS_Point p;
       bool ok = g_shell->touch().getRawPoint(p);
 
-      if (z1 >= 15 || ok) {
-        Serial.printf("[SPI HIT] Z1=%u Z2=%u rx=%u ry=%u | lib: x=%d y=%d z=%d\n",
-                      z1, z2, rx, ry, p.x, p.y, p.z);
-      }
-      delay(40);
+      Serial.printf("RAW: Z1=%u Z2=%u rawX=%u rawY=%u | ok=%d\n",
+                    z1, z2, rx, ry, (int)ok);
+      delay(150);
     }
     while (Serial.available()) Serial.read();
     g_shell->display().print("Stopped", COL_OK);
