@@ -18,7 +18,7 @@
 #define TOUCH_CLK       25
 #define TOUCH_MOSI      32
 #define TOUCH_MISO      35
-#define TOUCH_IRQ       34  // Optional / unused
+#define TOUCH_IRQ       27  // Hardware touch detector with internal INPUT_PULLUP
 
 // ====================== UI CONFIG ======================
 #define MAX_LINES       14

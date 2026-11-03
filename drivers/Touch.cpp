@@ -8,6 +8,8 @@ bool TouchManager::begin() {
   pinMode(TOUCH_CS, OUTPUT);
   digitalWrite(TOUCH_CS, HIGH);
 
+  pinMode(TOUCH_IRQ, INPUT_PULLUP);
+
   _touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
   _ts.begin(_touchSPI);
   _ts.setRotation(_rotation);
@@ -35,30 +37,26 @@ bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t
   return true;
 }
 
-bool TouchManager::getRawPoint(TS_Point& p) {
-  uint16_t z1 = 0, z2 = 0, rx = 0, ry = 0;
-  probeSPI(z1, z2, rx, ry);
+bool TouchManager::isTouched() {
+  return (digitalRead(TOUCH_IRQ) == LOW);
+}
 
-  // When not touched, Z1 is 0..10. When physically touched, Z1 jumps to 18+.
-  if (z1 < 18) {
+bool TouchManager::getRawPoint(TS_Point& p) {
+  // Hardware IRQ: pin goes LOW only upon real physical contact
+  if (digitalRead(TOUCH_IRQ) == HIGH) {
     return false;
   }
 
   p = _ts.getPoint();
-  p.z = (int16_t)z1;
   return true;
-}
-
-bool TouchManager::isTouched() {
-  TS_Point p;
-  return getRawPoint(p);
 }
 
 bool TouchManager::getCoordinates(int& x, int& y) {
   TS_Point p;
   if (!getRawPoint(p)) return false;
 
-  x = map(p.x, _calMinX, _calMaxX, 0, 240);
+  // Inverted X axis: right side is high rawX, left is low rawX
+  x = map(p.x, _calMaxX, _calMinX, 0, 240);
   y = map(p.y, _calMinY, _calMaxY, 0, 320);
 
   if (x < 0) x = 0;
@@ -84,9 +82,9 @@ TouchAction TouchManager::update(DisplayManager& display, String& inputBuffer, S
 
   Serial.printf("[Touch] Tap at X=%d, Y=%d (kbd=%s)\n", x, y, display.isKeyboardVisible() ? "ON" : "OFF");
 
-  // If keyboard is hidden
+  // If keyboard is hidden, tap anywhere in bottom area to open it
   if (!display.isKeyboardVisible()) {
-    if (y > 200) {
+    if (y > 180) {
       display.toggleKeyboard(inputBuffer, cwd);
       return TouchAction::KBD_TOGGLED;
     }
