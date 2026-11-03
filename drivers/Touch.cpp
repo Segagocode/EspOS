@@ -1,19 +1,15 @@
 #include "Touch.h"
 
-// Do NOT pass TOUCH_IRQ so XPT2046_Touchscreen uses SPI polling (tirqPin=255, isrWake=true)
-// instead of failing on ESP32 GPIO 34 which has no internal pullup.
 TouchManager::TouchManager()
-  : _ts(TOUCH_CS) {
+  : _touchSPI(HSPI), _ts(TOUCH_CS) {
 }
 
 bool TouchManager::begin() {
-  pinMode(TFT_CS, OUTPUT);
-  digitalWrite(TFT_CS, HIGH);
   pinMode(TOUCH_CS, OUTPUT);
   digitalWrite(TOUCH_CS, HIGH);
 
-  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
-  _ts.begin();
+  _touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+  _ts.begin(_touchSPI);
   _ts.setRotation(_rotation);
   return true;
 }
@@ -24,19 +20,26 @@ void TouchManager::setRotation(uint8_t rot) {
 }
 
 bool TouchManager::isTouched() {
-  return _ts.touched();
+  TS_Point p;
+  return getRawPoint(p);
 }
 
 bool TouchManager::getRawPoint(TS_Point& p) {
   p = _ts.getPoint();
-  return (p.z >= 200);
+  // Filter out disconnected or floating MISO bus:
+  // All zeros on SPI produces z=4095, x=4095, y=0.
+  if (p.z < 200 || p.z >= 4090) return false;
+  if ((p.x == 0 || p.x >= 4090) && (p.y == 0 || p.y >= 4090)) return false;
+  return true;
 }
 
 bool TouchManager::getCoordinates(int& x, int& y) {
-  TS_Point p = _ts.getPoint();
-  if (p.z < 200) return false;
+  TS_Point p;
+  if (!getRawPoint(p)) return false;
+
   x = map(p.x, _calMinX, _calMaxX, 0, 240);
   y = map(p.y, _calMinY, _calMaxY, 0, 320);
+
   if (x < 0) x = 0;
   if (x > 239) x = 239;
   if (y < 0) y = 0;
@@ -52,19 +55,18 @@ void TouchManager::setCalibration(int minX, int maxX, int minY, int maxY) {
 }
 
 bool TouchManager::probeSPI(uint16_t& z1, uint16_t& z2, uint16_t& rawX, uint16_t& rawY) {
-  digitalWrite(TFT_CS, HIGH);
-  SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  _touchSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
   digitalWrite(TOUCH_CS, LOW);
 
-  SPI.transfer(0xB1);
-  z1 = SPI.transfer16(0xC1) >> 3;
-  z2 = SPI.transfer16(0x91) >> 3;
-  rawX = SPI.transfer16(0xD1) >> 3;
-  rawY = SPI.transfer16(0xD0) >> 3;
-  SPI.transfer16(0);
+  _touchSPI.transfer(0xB1);
+  z1 = _touchSPI.transfer16(0xC1) >> 3;
+  z2 = _touchSPI.transfer16(0x91) >> 3;
+  rawX = _touchSPI.transfer16(0xD1) >> 3;
+  rawY = _touchSPI.transfer16(0xD0) >> 3;
+  _touchSPI.transfer16(0);
 
   digitalWrite(TOUCH_CS, HIGH);
-  SPI.endTransaction();
+  _touchSPI.endTransaction();
   return true;
 }
 

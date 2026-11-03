@@ -5,19 +5,20 @@
 #include <Adafruit_ILI9341.h>
 
 // ====================== PINS ======================
-// Display (ILI9341 SPI)
+// Display (ILI9341 SPI - Hardware VSPI)
 #define TFT_CS          15
 #define TFT_DC          2
 #define TFT_RST         4
-
-// Touchscreen (XPT2046 SPI)
-#define TOUCH_CS        33
-#define TOUCH_IRQ       34
-
-// Shared Hardware VSPI Bus
 #define SPI_SCK         18
 #define SPI_MOSI        23
 #define SPI_MISO        19
+
+// Touchscreen (XPT2046 SPI - Hardware HSPI, dedicated bus)
+#define TOUCH_CS        33
+#define TOUCH_CLK       25
+#define TOUCH_MOSI      32
+#define TOUCH_MISO      35
+#define TOUCH_IRQ       34  // Optional / unused
 
 // ====================== UI CONFIG ======================
 #define MAX_LINES       14
