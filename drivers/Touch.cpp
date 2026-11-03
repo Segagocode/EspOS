@@ -56,18 +56,13 @@ bool TouchManager::getRawPoint(TS_Point& p) {
   _touchSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
   digitalWrite(TOUCH_CS, LOW);
 
-  // 1. Measure Z1 and Z2 using byte-by-byte protocol
+  // 1. Measure Z1 and Z2
   uint16_t z1 = readADC(0xB1);
   uint16_t z2 = readADC(0xC1);
 
-  // Pressure Z = z1 + 4095 - z2
-  int32_t z = (int32_t)z1 + 4095 - (int32_t)z2;
-  if (z < 0) z = 0;
-
-  // Pressure threshold: untouched panel has z1 ~ 0, z2 ~ 4095 -> z ~ 0.
-  // Physical touch (even light) produces z > 200..4000.
-  if (z < 200) {
-    // Power down ADC and enable PENIRQ
+  // Untouched panel has z1 <= 8 and z2 == 0.
+  // Physical touch produces z1 >= 22 and z2 >= 6.
+  if (z1 < 22 || z2 < 6) {
     _touchSPI.transfer(0xD0);
     _touchSPI.transfer(0x00);
     _touchSPI.transfer(0x00);
@@ -102,9 +97,9 @@ bool TouchManager::getRawPoint(TS_Point& p) {
 
   p.x = rx;
   p.y = ry;
-  p.z = (int16_t)z;
+  p.z = z1;
 
-  Serial.printf("[DEBUG HIT] z1=%u z2=%u z=%d rawX=%u rawY=%u\n", z1, z2, (int)z, rx, ry);
+  Serial.printf("[DEBUG HIT] z1=%u z2=%u rawX=%u rawY=%u\n", z1, z2, rx, ry);
   return true;
 }
 
