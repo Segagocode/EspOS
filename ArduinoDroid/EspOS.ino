@@ -391,40 +391,49 @@ bool TouchManager::getRawPoint(TS_Point& p) {
   // 1. Wake up ADC from power down
   readADC(0xB1);
 
-  // 2. Measure Z1 and Z2
+  // 2. Sample 1
   uint16_t z1 = readADC(0xB1);
   uint16_t z2 = readADC(0xC1);
+  uint16_t rx1 = readADC(0xD1);
+  uint16_t ry1 = readADC(0x91);
 
-  // Filter 1: First sample must exceed idle noise floor
-  if (z1 < 40 || z2 < 15) {
+  // Base threshold: reject idle noise floor
+  if (z1 < 55 || z2 < 20) {
     digitalWrite(TOUCH_CS, HIGH);
     _touchSPI.endTransaction();
     return false;
   }
 
-  // Filter 2: Second sample 3ms later to eliminate transient capacitive / backlight spikes
-  delay(3);
+  // Reject ghost resting point unless pressed firmly
+  if (rx1 >= 3180 && rx1 <= 3320 && ry1 >= 2460 && ry1 <= 2560) {
+    if (z1 < 85) {
+      digitalWrite(TOUCH_CS, HIGH);
+      _touchSPI.endTransaction();
+      return false;
+    }
+  }
+
+  // 3. Sample 2 (debounce 2ms later)
+  delay(2);
   uint16_t z1_b = readADC(0xB1);
   uint16_t z2_b = readADC(0xC1);
-  if (z1_b < 30 || z2_b < 10) {
-    digitalWrite(TOUCH_CS, HIGH);
-    _touchSPI.endTransaction();
-    return false;
-  }
-
-  // 3. Read X and Y (3 samples for median filtering to eliminate jitter)
-  uint16_t xs[3];
-  uint16_t ys[3];
-  for (int i = 0; i < 3; i++) {
-    xs[i] = readADC(0xD1); // X
-    ys[i] = readADC(0x91); // Y
-  }
+  uint16_t rx2 = readADC(0xD1);
+  uint16_t ry2 = readADC(0x91);
 
   digitalWrite(TOUCH_CS, HIGH);
   _touchSPI.endTransaction();
 
-  uint16_t rx = median3(xs[0], xs[1], xs[2]);
-  uint16_t ry = median3(ys[0], ys[1], ys[2]);
+  if (z1_b < 48 || z2_b < 15) {
+    return false;
+  }
+
+  // Coordinate stability check
+  if (abs((int)rx1 - (int)rx2) > 120 || abs((int)ry1 - (int)ry2) > 120) {
+    return false;
+  }
+
+  uint16_t rx = (rx1 + rx2) / 2;
+  uint16_t ry = (ry1 + ry2) / 2;
 
   // Coordinate validity bounds check
   if (rx < 100 || rx > 4000 || ry < 100 || ry > 4000) {
